@@ -12,10 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from dataclasses import dataclass, field
+from typing import Optional
+
 import torch
 from datasets import load_dataset
 from tqdm import tqdm
-from transformers import AutoTokenizer, pipeline
+from transformers import AutoTokenizer, HfArgumentParser, pipeline
 
 from trl import AutoModelForSeq2SeqLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
@@ -40,10 +44,39 @@ tqdm.pandas()
 #
 ########################################################################
 
+
 # We first define the configuration of the experiment, defining the model, the dataset,
 # the training parameters, and the PPO parameters.
 # Check the default arguments in the `PPOConfig` class for more details.
-config = PPOConfig(model_name="lvwerra/t5-imdb", learning_rate=5e-5, batch_size=256)
+@dataclass
+class ScriptArguments:
+    """
+    The name of the Casual LM model we wish to fine with PPO
+    """
+
+    # NOTE: gpt2 models use Conv1D instead of Linear layers which are not yet supported in 8 bit mode
+    # models like gpt-neo* models are more suitable.
+    model_name: Optional[str] = field(default="lvwerra/t5-imdb", metadata={"help": "the model name"})
+    log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
+    learning_rate: Optional[float] = field(default=5e-5, metadata={"help": "the learning rate"})
+    mini_batch_size: Optional[int] = field(default=16, metadata={"help": "the PPO minibatch size"})
+    batch_size: Optional[int] = field(default=256, metadata={"help": "the batch size"})
+    gradient_accumulation_steps: Optional[int] = field(
+        default=1, metadata={"help": "the number of gradient accumulation steps"}
+    )
+
+
+parser = HfArgumentParser(ScriptArguments)
+script_args = parser.parse_args_into_dataclasses()[0]
+
+config = PPOConfig(
+    model_name=script_args.model_name,
+    learning_rate=script_args.learning_rate,
+    log_with=script_args.log_with,
+    mini_batch_size=script_args.mini_batch_size,
+    batch_size=script_args.batch_size,
+    gradient_accumulation_steps=script_args.gradient_accumulation_steps,
+)
 # We then define the arguments to pass to the sentiment analysis pipeline.
 # We set `return_all_scores` to True to get the sentiment score for each token.
 sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 16}
@@ -111,14 +144,11 @@ output_length_sampler = LengthSampler(output_min_length, output_max_length)
 for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     query_tensors = batch["input_ids"]
 
-    # Get response from gpt2
-    response_tensors = []
-    for query in query_tensors:
-        gen_len = output_length_sampler()
-        generation_kwargs["max_new_tokens"] = gen_len
-        response = ppo_trainer.generate(query, **generation_kwargs)
-        response_tensors.append(response.squeeze())
-    batch["response"] = [tokenizer.decode(r[1:].squeeze()) for r in response_tensors]
+    # Get response from t5
+    response_tensors = ppo_trainer.generate(
+        query_tensors, return_prompt=False, length_sampler=output_length_sampler, **generation_kwargs
+    )
+    batch["response"] = tokenizer.batch_decode([r[1:] for r in response_tensors])
 
     # Compute sentiment score
     texts = [q + r for q, r in zip(batch["query"], batch["response"])]
