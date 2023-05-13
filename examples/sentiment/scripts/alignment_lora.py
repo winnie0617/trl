@@ -12,16 +12,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass, field
+from typing import Optional
+
 import torch
 from datasets import load_dataset
+from peft import LoraConfig
 from tqdm import tqdm
-from transformers import AutoTokenizer, pipeline, AutoModel
+from transformers import AutoTokenizer, HfArgumentParser, pipeline
 
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, set_seed
 from trl.core import LengthSampler
 
-
-tqdm.pandas()
 
 ########################################################################
 # This is a fully working simple example to use trl with accelerate.
@@ -30,13 +32,19 @@ tqdm.pandas()
 # (proximal policy optimization).
 # in any of the following settings (with the same script):
 #   - single CPU or single GPU
-#   - multi GPUS (using PyTorch distributed mode)
-#   - multi GPUS (using DeepSpeed ZeRO-Offload stages 1 & 2)
 #   - fp16 (mixed-precision) or fp32 (normal precision)
 #
 # To run it in each of these various modes, first initialize the accelerate
 # configuration with `accelerate config`
 #
+########################################################################
+
+########################################################################
+# NOTE for to train with a 8-bit model a more recent version of
+# transformers is required, full dependecies for this example:
+# pip install  bitsandbytes datasets accelerate loralib
+# pip install  git+https://github.com/huggingface/transformers.git@main
+# pip install peft
 ########################################################################
 
 # We first define the configuration of the experiment, defining the model, the dataset,
@@ -45,20 +53,43 @@ tqdm.pandas()
 # If you want to log with tensorboard, add the kwarg
 # `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
 
-# model_name = "/home/nlpintern/wchow/LMFlow/output_models/finetune_with_lora_llama_merged"
+
+# Define and parse arguments.
+@dataclass
+class ScriptArguments:
+    """
+    The name of the Casual LM model we wish to fine with PPO
+    """
+
+    # NOTE: gpt2 models use Conv1D instead of Linear layers which are not yet supported in 8 bit mode
+    # models like gpt-neo* models are more suitable
+    # model_name: Optional[str] = field(default="edbeeching/gpt-neo-1.3B-imdb", metadata={"help": "the model name"})
+    log_with: Optional[str] = field(default="wandb", metadata={"help": "use 'wandb' to log with wandb"})
+    # learning_rate: Optional[float] = field(default=1.41e-6, metadata={"help": "the learning rate"})
+    merge_model_adapter: Optional[bool] = field(default=True, metadata={"help": "the learning rate"})
+
+
+parser = HfArgumentParser(ScriptArguments)
+script_args = parser.parse_args_into_dataclasses()[0]
+
 model_name = "/home/nlpintern/wchow/LMFlow/output_models/finetune-gpt-neo"
+# model_name = "/home/nlpintern/wchow/LMFlow/output_models/finetune_with_lora_llama_merged"
 rm_name = "/home/nlpintern/wchow/LMFlow/output_models/rm"
+
 config = PPOConfig(
     model_name=model_name,
-    learning_rate=1.41e-5,
-    batch_size=1,
-    gradient_accumulation_steps=8,
-    log_with="wandb"
+    learning_rate=2e-5,
+    init_kl_coef=0.000,
+    log_with=script_args.log_with,
+    batch_size=32,
+    mini_batch_size=1,
+    gradient_accumulation_steps=1,
+    optimize_cuda_cache=True,
 )
 
 # We then define the arguments to pass to the sentiment analysis pipeline.
 # We set `return_all_scores` to True to get the sentiment score for each token.
-sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 1}
+sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": config.mini_batch_size}
 
 
 # Below is an example function to build the dataset. In our case, we use the IMDB dataset
@@ -81,7 +112,6 @@ def build_dataset(config, dataset_name="imdb", input_min_text_length=2, input_ma
     tokenizer.pad_token = tokenizer.eos_token
     # load imdb with datasets
     ds = load_dataset("Anthropic/hh-rlhf", data_dir="harmless-base", split="train")
-   
     def tokenize(sample):
         # query = sample["chosen"].split("\nAssistant: ")[0].split("\nHuman: ")[1]
         query, response = sample["chosen"].rsplit("\nAssistant: ", 1)
@@ -105,17 +135,57 @@ def collator(data):
 # set seed before initializing value head for deterministic eval
 set_seed(config.seed)
 
+
+"""### Apply LoRA
+Here comes the magic with `peft`! Let's load a `PeftModel` and specify that we are going to use low-rank adapters (LoRA) using `get_peft_model` utility function from `peft`.
+"""
+
+
+def print_trainable_parameters(model):
+    """
+    Prints the number of trainable parameters in the model.
+    """
+    trainable_params = 0
+    all_param = 0
+    for _, param in model.named_parameters():
+        all_param += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    print(
+        f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
+    )
+
+
+lora_config = LoraConfig(
+    r=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=['q_proj', 'v_proj'],
+)
+
 # Now let's build the model, the reference model, and the tokenizer.
-model = AutoModelForCausalLMWithValueHead.from_pretrained(config.model_name)
-ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.model_name)
+model = AutoModelForCausalLMWithValueHead.from_pretrained(
+    config.model_name,
+    load_in_8bit=True,
+    device_map="balanced",
+    # max_memory={0: "800MB", 1: "800MB"},
+    peft_config=lora_config,
+)
 tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+
+print_trainable_parameters(model)
 
 # GPT-2 tokenizer has a pad token, but it is not eos_token by default. We need to set it to eos_token.
 # only for this model.
-tokenizer.pad_token = tokenizer.eos_token
+# tokenizer.pad_token = tokenizer.eos_token
 
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
 # We then build the PPOTrainer, passing the model, the reference model, the tokenizer
-ppo_trainer = PPOTrainer(config, model, ref_model, tokenizer, dataset=dataset, data_collator=collator)
+ppo_trainer = PPOTrainer(
+    config, model, ref_model=None, tokenizer=tokenizer, dataset=dataset, data_collator=collator, optimizer=optimizer
+)
 
 # We then build the sentiment analysis pipeline, passing the model name and the
 # sentiment analysis pipeline arguments. Let's also make sure to set the device
@@ -134,26 +204,24 @@ generation_kwargs = {
     "top_p": 1.0,
     "do_sample": True,
     "pad_token_id": tokenizer.eos_token_id,
+    "eos_token_id": -1,
 }
 output_min_length = 10
-output_max_length = 50
+output_max_length = 128
 output_length_sampler = LengthSampler(output_min_length, output_max_length)
+
 
 for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     query_tensors = batch["input_ids"]
 
-    # Get response from gpt2
+    model.gradient_checkpointing_disable()
+    model.pretrained_model.config.use_cache = True
+    # Get response from Causal LM
     response_tensors = []
     for query in query_tensors:
-        # if len(query) < 520: #TODO: remove
-        # print("Query")
-        # print(tokenizer.decode(query))
         gen_len = output_length_sampler()
         generation_kwargs["max_new_tokens"] = gen_len
         response = ppo_trainer.generate(query, **generation_kwargs)
-        # print("\n response")
-        # print(tokenizer.decode(response.squeeze()))
-        # print(tokenizer.decode(response.squeeze()[-gen_len:]))
         response_tensors.append(response.squeeze()[-gen_len:])
     batch["response"] = [tokenizer.decode(r.squeeze()) for r in response_tensors]
 
@@ -161,10 +229,17 @@ for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     texts = [q + r for q, r in zip(batch["query"], batch["response"])]
     pipe_outputs = sentiment_pipe(texts, **sent_kwargs)
     rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
+
     for t, r in zip(texts, rewards):
         print(t)
         print(r)
 
     # Run PPO step
+    model.gradient_checkpointing_enable()
+    model.pretrained_model.config.use_cache = False
+
     stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
     ppo_trainer.log_stats(stats, batch, rewards)
+
+
+model.push_to_hub(f"{script_args.model_name}-ppo-sentiment")
