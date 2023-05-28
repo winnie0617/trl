@@ -72,14 +72,17 @@ class ScriptArguments:
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
-model_name = "/home/nlpintern/wchow/LMFlow/output_models/finetune-gpt-neo"
-# model_name = "/home/nlpintern/wchow/LMFlow/output_models/finetune_with_lora_llama_merged"
-rm_name = "/home/nlpintern/wchow/LMFlow/output_models/rm"
+gpt = True
+if gpt:
+    model_name = "/home/winnie/trl/examples/sentiment/scripts/my_models/finetune-gpt-neo"
+else:
+    model_name = "/home/winnie/trl/examples/sentiment/scripts/my_models/finetune-with-lora-llama-merged"
+rm_name = "/home/winnie/trl/examples/sentiment/scripts/my_models/rm"
 
 config = PPOConfig(
     model_name=model_name,
-    learning_rate=2e-5,
-    init_kl_coef=0.000,
+    learning_rate=1e-5,
+    # init_kl_coef=0.05, t
     log_with=script_args.log_with,
     batch_size=32,
     mini_batch_size=1,
@@ -109,7 +112,8 @@ def build_dataset(config, dataset_name="imdb", input_min_text_length=2, input_ma
             The dataloader for the dataset.
     """
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-    tokenizer.pad_token = tokenizer.eos_token
+    # if gpt:
+    #     tokenizer.pad_token = tokenizer.eos_token
     # load imdb with datasets
     ds = load_dataset("Anthropic/hh-rlhf", data_dir="harmless-base", split="train")
     def tokenize(sample):
@@ -179,7 +183,8 @@ print_trainable_parameters(model)
 
 # GPT-2 tokenizer has a pad token, but it is not eos_token by default. We need to set it to eos_token.
 # only for this model.
-# tokenizer.pad_token = tokenizer.eos_token
+if gpt:
+    tokenizer.pad_token = tokenizer.eos_token
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
 # We then build the PPOTrainer, passing the model, the reference model, the tokenizer
