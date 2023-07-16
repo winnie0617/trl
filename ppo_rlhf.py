@@ -55,14 +55,17 @@ from peft import LoraConfig
 # If you want to log with tensorboard, add the kwarg
 # `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
 # Define and parse arguments.
+root_dir = "/home/winnie"
+# root_dir = "/home/xiongwei/wchow"
+
 @dataclass
 class ScriptArguments:
     """
     The name of the Casual LM model we wish to fine with PPO
     """
-    model_name: Optional[str] = field(default='/home/xiongwei/LMFlow/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
+    model_name: Optional[str] = field(default=f'{root_dir}/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default='wandb', metadata={"help": "use 'wandb' to log with wandb"})
-    save_directory: Optional[str] = field(default='/home/yangrui/wchow/trl/logs_trl/')
+    save_directory: Optional[str] = field(default=f'{root_dir}//trl/logs_trl/')
     epochs: Optional[int] = field(default=1, metadata={'help': "Number of training epoches"})
     learning_rate: Optional[float] = field(default=1e-5, metadata={"help": "the learning rate"})
     mini_batch_size: Optional[int] = field(default=1, metadata={"help": "the PPO minibatch size"})
@@ -203,8 +206,8 @@ tokenizer.add_special_tokens(
     }
 )
 
-rm_path = "/home/yangrui/wchow/output_models/rm_finetune-gpt-neo_bs_7_20/rm_0"
-data_path = "/home/yangrui/wchow/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
+rm_path = "/home/share/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4"
+data_path = f"{root_dir}/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
 # eval_data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/eval_prompt.json"
 # eval_dataset = build_dataset(config, tokenizer, eval_data_path)
