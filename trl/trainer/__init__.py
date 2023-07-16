@@ -16,10 +16,12 @@
 
 # There is a circular import in the PPOTrainer if we let isort sort these
 # isort: off
-from .utils import AdaptiveKLController, FixedKLController
+from .utils import AdaptiveKLController, FixedKLController, ConstantLengthDataset, DataCollatorForCompletionOnlyLM
 
 # isort: on
 
 from .base import BaseTrainer
 from .ppo_config import PPOConfig
 from .ppo_trainer import PPOTrainer
+from .reward_trainer import RewardTrainer, compute_accuracy
+from .sft_trainer import SFTTrainer

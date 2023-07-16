@@ -54,9 +54,10 @@ To create the package for pypi.
    Then push the change with a message 'set dev version'
 """
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
-__version__ = "0.3.2.dev0"  # expected format is one of x.y.z.dev0, or x.y.z.rc1 or x.y.z (no to dashes, yes to dots)
+
+__version__ = "0.4.8.dev0"  # expected format is one of x.y.z.dev0, or x.y.z.rc1 or x.y.z (no to dashes, yes to dots)
 
 REQUIRED_PKGS = [
     "torch>=1.4.0",
@@ -66,8 +67,9 @@ REQUIRED_PKGS = [
     "datasets",
 ]
 EXTRAS = {
-    "test": ["parameterized", "pytest", "pytest-xdist", "accelerate"],
-    "dev": ["parameterized", "pytest", "pytest-xdist", "black", "isort", "flake8>=3.8.3"],
+    "test": ["parameterized", "pytest", "pytest-xdist", "accelerate", "peft"],
+    "peft": ["peft>=0.2.0"],
+    "dev": ["parameterized", "pytest", "pytest-xdist", "pre-commit", "peft>=0.2.0"],
 }
 
 setup(

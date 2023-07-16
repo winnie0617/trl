@@ -101,7 +101,7 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
                 Additional keyword arguments, that are passed to the `ValueHead` class.
         """
         super().__init__(pretrained_model)
-        v_head_kwargs, _ = self._split_kwargs(kwargs)
+        v_head_kwargs, _, _ = self._split_kwargs(kwargs)
 
         if not any(hasattr(self.pretrained_model, attribute) for attribute in self.lm_head_namings):
             raise ValueError("The model does not have a language model head, please use a model that has one.")
@@ -157,9 +157,13 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
                 Additional keyword arguments, that are passed to the wrapped model.
         """
         kwargs["output_hidden_states"] = True  # this had already been set in the LORA / PEFT examples
+        kwargs["past_key_values"] = past_key_values
+
+        if self.is_peft_model and self.pretrained_model.active_peft_config.peft_type == "PREFIX_TUNING":
+            kwargs.pop("past_key_values")
+
         base_model_output = self.pretrained_model(
             input_ids=input_ids,
-            past_key_values=past_key_values,
             attention_mask=attention_mask,
             **kwargs,
         )
@@ -167,6 +171,9 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
         last_hidden_state = base_model_output.hidden_states[-1]
         lm_logits = base_model_output.logits
         loss = base_model_output.loss
+
+        if last_hidden_state.device != self.v_head.summary.weight.device:
+            last_hidden_state = last_hidden_state.to(self.v_head.summary.weight.device)
 
         value = self.v_head(last_hidden_state).squeeze(-1)
 
@@ -223,6 +230,32 @@ class AutoModelForCausalLMWithValueHead(PreTrainedModelWrapper):
         self.v_head.load_state_dict(state_dict, strict=False)
         del state_dict
 
+        if hasattr(self.pretrained_model, "hf_device_map"):
+            if (
+                "cpu" in self.pretrained_model.hf_device_map.values()
+                or "disk" in self.pretrained_model.hf_device_map.values()
+            ):
+                raise ValueError(
+                    "The model is offloaded on CPU or disk - CPU & disk offloading is not supported for ValueHead models."
+                )
+
+            first_device = list(set(self.pretrained_model.hf_device_map.values()))[0]
+
+            self.v_head = self.v_head.to(first_device)
+
+            def set_device_hook(module, input, outputs):
+                new_output = ()
+                for output in outputs:
+                    if isinstance(output, torch.Tensor):
+                        new_output += (output.to(first_device),)
+                    else:
+                        new_output += (output,)
+                return new_output
+
+            self.register_forward_hook(set_device_hook)
+
+            self.is_sequential_parallel = True
+
 
 class AutoModelForSeq2SeqLMWithValueHead(PreTrainedModelWrapper):
     r"""
@@ -249,7 +282,7 @@ class AutoModelForSeq2SeqLMWithValueHead(PreTrainedModelWrapper):
 
     def __init__(self, pretrained_model, **kwargs):
         super().__init__(pretrained_model)
-        v_head_kwargs, _ = self._split_kwargs(kwargs)
+        v_head_kwargs, _, _ = self._split_kwargs(kwargs)
         self.is_encoder_decoder = True
 
         if not self._has_lm_head():
@@ -277,6 +310,48 @@ class AutoModelForSeq2SeqLMWithValueHead(PreTrainedModelWrapper):
                 state_dict[k.replace("v_head.", "")] = state_dict.pop(k)
         self.v_head.load_state_dict(state_dict, strict=False)
         del state_dict
+
+        if hasattr(self.pretrained_model, "hf_device_map"):
+            if (
+                "cpu" in self.pretrained_model.hf_device_map.values()
+                or "disk" in self.pretrained_model.hf_device_map.values()
+            ):
+                raise ValueError(
+                    "The model is offloaded on CPU or disk - CPU & disk offloading is not supported for ValueHead models."
+                )
+
+            # get the lm_head device
+            for name, module in self.pretrained_model.named_modules():
+                if any(attribute in name for attribute in self.lm_head_namings):
+                    lm_head_device = module.weight.device
+                    break
+
+            # put v_head on the same device as the lm_head to avoid issues
+            self.v_head = self.v_head.to(lm_head_device)
+
+            def set_device_hook(module, input, outputs):
+                r"""
+                A hook that sets the device of the output of the model to the device of the first
+                parameter of the model.
+
+                Args:
+                    module (`nn.Module`):
+                        The module to which the hook is attached.
+                    input (`tuple`):
+                        The input to the module.
+                    outputs (`tuple`):
+                        The output of the module.
+                """
+                new_output = ()
+                for output in outputs:
+                    if isinstance(output, torch.Tensor):
+                        new_output += (output.to(lm_head_device),)
+                    else:
+                        new_output += (output,)
+                return new_output
+
+            self.register_forward_hook(set_device_hook)
+            self.is_sequential_parallel = True
 
     def state_dict(self, *args, **kwargs):
         r"""
@@ -320,9 +395,12 @@ class AutoModelForSeq2SeqLMWithValueHead(PreTrainedModelWrapper):
         attention_mask=None,
         **kwargs,
     ):
+        kwargs["past_key_values"] = past_key_values
+        if self.is_peft_model and self.pretrained_model.active_peft_config.peft_type == "PREFIX_TUNING":
+            kwargs.pop("past_key_values")
+
         base_model_output = self.pretrained_model(
             input_ids=input_ids,
-            past_key_values=past_key_values,
             attention_mask=attention_mask,
             output_hidden_states=True,  # We force the model to output hidden states
             **kwargs,

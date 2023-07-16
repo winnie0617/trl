@@ -12,11 +12,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass, field
+from typing import Optional
+
 import torch
 from datasets import load_dataset
 from torch.optim import Adam
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, RobertaForSequenceClassification, RobertaTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    HfArgumentParser,
+    RobertaForSequenceClassification,
+    RobertaTokenizer,
+)
 
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer, create_reference_model, set_seed
 from trl.core import LengthSampler
@@ -41,17 +50,45 @@ tqdm.pandas()
 #
 ########################################################################
 
+
 # We first define the configuration of the experiment, defining the model, the dataset,
 # the training parameters, and the PPO parameters.
 # Check the default arguments in the `PPOConfig` class for more details.
 # If you want to log with tensorboard, add the kwarg
-# `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
+# `project_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
+@dataclass
+class ScriptArguments:
+    """
+    The name of the Casual LM model we wish to fine with PPO
+    """
+
+    # NOTE: gpt2 models use Conv1D instead of Linear layers which are not yet supported in 8 bit mode
+    # models like gpt-neo* models are more suitable.
+    model_name: Optional[str] = field(default="ybelkada/gpt-j-6b-sharded-bf16", metadata={"help": "the model name"})
+    log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
+    learning_rate: Optional[float] = field(default=(1.47e-5) * 2, metadata={"help": "the learning rate"})
+    mini_batch_size: Optional[int] = field(default=4, metadata={"help": "the PPO minibatch size"})
+    batch_size: Optional[int] = field(default=16, metadata={"help": "the batch size"})
+    gradient_accumulation_steps: Optional[int] = field(
+        default=1, metadata={"help": "the number of gradient accumulation steps"}
+    )
+    model_save_path: Optional[str] = field(
+        default="./gpt-j-6B-detoxified-long-context-26-shl-1e4-final",
+        metadata={"help": "the path to save the model"},
+    )
+
+
+parser = HfArgumentParser(ScriptArguments)
+script_args = parser.parse_args_into_dataclasses()[0]
+
 config = PPOConfig(
-    model_name="ybelkada/gpt-j-6b-sharded-bf16",
-    learning_rate=(1.47e-5) * 2,
-    log_with="wandb",
-    batch_size=32,
-    forward_batch_size=1,
+    model_name=script_args.model_name,
+    learning_rate=script_args.learning_rate,
+    log_with=script_args.log_with,
+    ppo_epochs=100,
+    mini_batch_size=script_args.mini_batch_size,
+    batch_size=script_args.batch_size,
+    gradient_accumulation_steps=script_args.gradient_accumulation_steps,
 )
 
 
@@ -134,7 +171,13 @@ tokenizer.pad_token = tokenizer.eos_token
 
 # We then build the PPOTrainer, passing the model, the reference model, the tokenizer
 ppo_trainer = PPOTrainer(
-    config, model, ref_model=ref_model, tokenizer=tokenizer, dataset=dataset, data_collator=collator
+    config,
+    model,
+    ref_model=ref_model,
+    tokenizer=tokenizer,
+    dataset=dataset,
+    data_collator=collator,
+    optimizer=optimizer,
 )
 
 # We then build the reward pipeline, we will use the toxicity model to compute the reward.
@@ -161,12 +204,12 @@ output_min_length = 20
 output_max_length = 30
 output_length_sampler = LengthSampler(output_min_length, output_max_length)
 
-model_save_path = "/mnt/disks/younes-disk/models/gpt-j-6B-detoxified-long-context-26-shl-1e4-final"
+model_save_path = script_args.model_save_path
 
 for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     query_tensors = batch["input_ids"]
 
-    # Get response from gpt2
+    # Get response from the policy model
     response_tensors = []
     for query in query_tensors:
         gen_len = output_length_sampler()

@@ -1,16 +1,25 @@
-# Sentiment Examples
+# Examples
 
-The notebooks and scripts in this examples show how to fine-tune a model with a sentiment classifier (such as `lvwerra/distilbert-imdb`).
+_The best place to learn about examples in TRL is our [docs page](https://huggingface.co/docs/trl/index)!_
 
-Here's an overview of the notebooks and scripts:
+## Introduction
 
-| File | Description |
-|---|---|
-| `notebooks/gpt2-sentiment.ipynb`  | Fine-tune GPT2 to generate positive movie reviews. |
-| `notebooks/gpt2-sentiment-control.ipynb`  | Fine-tune GPT2 to generate movie reviews with controlled sentiment. |
-| `scripts/gpt2-sentiment.py` | Same as the notebook, but easier to use to use in mutli-GPU setup. |
-| `scripts/t5-sentiment.py` | Same as GPT2 script, but for a Seq2Seq model (T5). |
+The examples should work in any of the following settings (with the same script):
+   - single CPU or single GPU
+   - multi GPUS (using PyTorch distributed mode)
+   - multi GPUS (using DeepSpeed ZeRO-Offload stages 1 & 2)
+   - fp16 (mixed-precision) or fp32 (normal precision)
 
+To run it in each of these various modes, first initialize the accelerate
+configuration with `accelerate config`
+
+**NOTE for to train with a 8-bit model a more recent version of**
+transformers is required, for example:
+
+```bash
+pip install --upgrade bitsandbytes datasets accelerate loralib
+pip install git+https://github.com/huggingface/peft.git
+```
 
 ## Installation
 
@@ -19,48 +28,23 @@ pip install trl
 #optional: wandb
 pip install wandb
 ```
+Note: if you don't want to log with `wandb` remove `log_with="wandb"` in the scripts/notebooks. 
+You can also replace it with your favourite experiment tracker that's [supported by `accelerate`](https://huggingface.co/docs/accelerate/usage_guides/tracking).
 
-Note: if you don't want to log with `wandb` remove `log_with="wandb"` in the scripts/notebooks. You can also replace it with your favourite experiment tracker that's [supported by `accelerate`](https://huggingface.co/docs/accelerate/usage_guides/tracking).
+## Accelerate Config
+For all the examples, you'll need to generate an `Accelerate` config with:
 
-
-## Launch scripts
-
-The `trl` library is powered by `accelerate`. As such it is best to configure and launch trainings with the following commands:
-
-```bash
+```shell
 accelerate config # will prompt you to define the training configuration
-accelerate launch scripts/gpt2-sentiment.py # launches training
 ```
 
-# Summarization Example
-  
-The script in this example show how to train a reward model for summarization, following the OpenAI Learning to Summarize from Human Feedback [paper](https://arxiv.org/abs/2009.01325). We've validated that the script can be used to train a small GPT2 to get slightly over 60% validation accuracy, which is aligned with results from the paper. The model is [here](https://huggingface.co/Tristan/gpt2_reward_summarization).
+Then, it is encouraged to launch jobs with `accelerate launch`!
 
-Here's an overview of the files:
+## Categories
+The examples are currently split over the following categories:
 
-| File | Description |
-|---|---|
-| `scripts/reward_summarization.py` | For tuning the reward model. |
-| `scripts/ds3_reward_summarization_example_config.json` | Can be used with the reward model script to scale it up to arbitrarily big models that don't fit on a single GPU. |
-
-
-## Installation
-
-```bash
-pip install trl
-pip install evaluate
-# optional: deepspeed
-pip install deepspeed
-```
-
-```bash
-# If you want your reward model to follow the Learning to Summarize from Human Feedback paper closely, then tune a GPT model on summarization and then instantiate the reward model
-# with it. In other words, pass in the name of your summarization-finetuned gpt on the hub, instead of the name of the pretrained gpt2 like we do in the following examples of how
-# to run this script.
-
-# Example of running this script with the small size gpt2 on a 40GB A100 (A100's support bf16). Here, the global batch size will be 64:
-python -m torch.distributed.launch --nproc_per_node=1 reward_summarization.py --bf16
-
-# Example of running this script with the xl size gpt2 on 16 40GB A100's. Here the global batch size will still be 64:
-python -m torch.distributed.launch --nproc_per_node=16 reward_summarization.py --per_device_train_batch_size=1 --per_device_eval_batch_size=1 --gradient_accumulation_steps=4 --gpt_model_name=gpt2-xl --bf16 --deepspeed=ds3_reward_summarization_example_config.json
-```
+**1: [ppo_trainer](https://github.com/lvwerra/trl/tree/main/examples/scripts/sentiment_tuning.py)**: Learn about different ways of using PPOTrainer
+**2: [sft_trainer](https://github.com/lvwerra/trl/tree/main/examples/scripts/sft_trainer.py)**: Learn about how to leverage `SFTTrainer` for supervised fine-tuning your pretrained language models easily.
+**3: [reward_modeling](https://github.com/lvwerra/trl/tree/main/examples/scripts/reward_trainer.py)**: Learn about how to use `RewardTrainer` to easily train your own reward model to use it for your RLHF pipeline.
+**4: [research_projects](https://github.com/lvwerra/trl/tree/main/examples/research_projects)**: Check out that folder to check the scripts used for some research projects that used TRL (LM de-toxification, Stack-Llama, etc.)
+**5: [notebooks](https://github.com/lvwerra/trl/tree/main/examples/notebooks)**: Check out that folder to check some applications of TRL features directly on a Jupyter notebook. This includes running sentiment tuning and sentiment control on a notebook, but also how to use "Best of N sampling" strategy using TRL.
