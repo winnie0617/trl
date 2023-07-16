@@ -16,13 +16,12 @@ import os
 import time
 import typing
 import warnings
-import datetime
 from typing import Callable, List, Optional, Union
 
 import datasets
 import torch
 from accelerate import Accelerator
-from accelerate.utils import ProjectConfiguration, InitProcessGroupKwargs
+from accelerate.utils import ProjectConfiguration
 from datasets import Dataset
 from huggingface_hub import whoami
 from packaging import version
@@ -51,7 +50,7 @@ from ..core import (
     stats_to_np,
 )
 from ..import_utils import is_torch_greater_2_0
-from ..models import SUPPORTED_ARCHITECTURES, PreTrainedModelWrapper, create_reference_model
+from ..models import SUPPORTED_ARCHITECTURES, PreTrainedModelWrapper
 from . import AdaptiveKLController, BaseTrainer, FixedKLController, PPOConfig
 
 
@@ -100,7 +99,7 @@ outputs = model(**inputs, labels=inputs["input_ids"])
 """
 
 
-class PPOTrainer(BaseTrainer):
+class PPOVanillaTrainer(BaseTrainer):
     """
     The PPOTrainer uses Proximal Policy Optimization to optimise language models.
     Note, this trainer is heavily inspired by the original OpenAI learning to summarize work here:
@@ -111,10 +110,6 @@ class PPOTrainer(BaseTrainer):
          details.
         **model** (`PreTrainedModelWrapper`) -- Model to be optimized, Hugging Face transformer model with a value head.
             Check the documentation of `PreTrainedModelWrapper` for more details.
-        **ref_model** (`PreTrainedModelWrapper`, *optional*) -- Reference model to be used for KL penalty, Hugging Face
-            transformer model with a casual language modelling head. Check the documentation of `PreTrainedModelWrapper`
-            for more details. If no reference model is provided, the trainer will create a reference model with the same
-             architecture as the model to be optimized with shared layers.
         **tokenizer** (`PreTrainedTokenizerBase`) -- Tokenizer to be used for encoding the
             data. Check the documentation of `transformers.PreTrainedTokenizer` and
             `transformers.PreTrainedTokenizerFast` for more details.
@@ -136,7 +131,6 @@ class PPOTrainer(BaseTrainer):
         self,
         config: PPOConfig = None,
         model: PreTrainedModelWrapper = None,
-        ref_model: Optional[PreTrainedModelWrapper] = None,
         tokenizer: PreTrainedTokenizerBase = None,
         dataset: Optional[Union[torch.utils.data.Dataset, Dataset]] = None,
         optimizer: Optional[torch.optim.Optimizer] = None,
@@ -152,8 +146,6 @@ class PPOTrainer(BaseTrainer):
                 Configuration object for PPOTrainer. Check the documentation of `PPOConfig` for more details.
             model (`PreTrainedModelWrapper`):
                 Hugging Face transformer model with a value head.
-            ref_model (`PreTrainedModelWrapper`):
-                Hugging Face transformer model with a casual language modelling head. Used for KL penalty
             tokenizer (`transformers.PreTrainedTokenizerBase`):
                 Hugging Face tokenizer
             dataset (Optional[Union[`torch.utils.data.Dataset`, `datasets.Dataset`]]):
@@ -164,9 +156,6 @@ class PPOTrainer(BaseTrainer):
                 Optimizer used for training. If `None`, the `Adam` is used as default.
             data_collator (Optional[function]):
                 Data collator function.
-            num_shared_layers (Optional[int]):
-                Number of shared layers between the model and the reference model. If `None`, all layers are shared.
-                used only if `ref_model` is `None`.
             lr_scheduler (Optional[`torch.optim.lr_scheduler`]):
                 Learning rate scheduler used for training.
         """
@@ -187,12 +176,10 @@ class PPOTrainer(BaseTrainer):
                 f"model must be a PreTrainedModelWrapper, got {type(model)} - supported architectures are: {SUPPORTED_ARCHITECTURES}"
             )
         # Step 1: Initialize Accelerator
-        kwargs = InitProcessGroupKwargs(timeout=datetime.timedelta(seconds=5400))
         self.accelerator = Accelerator(
             log_with=config.log_with,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
             project_config=ProjectConfiguration(**config.project_kwargs),
-            kwargs_handlers=[kwargs],
             **config.accelerator_kwargs,
         )
 
@@ -207,24 +194,6 @@ class PPOTrainer(BaseTrainer):
         self.model = model
         self.is_encoder_decoder = hasattr(self.model, "is_encoder_decoder")
         self.is_peft_model = getattr(self.model, "is_peft_model", False)
-
-        if isinstance(ref_model, SUPPORTED_ARCHITECTURES):
-            self.ref_model = ref_model
-            if num_shared_layers is not None:
-                warnings.warn(
-                    "num_shared_layers is ignored when ref_model is provided. Two different models are used for the "
-                    "model and the reference model and no layers are shared.",
-                    UserWarning,
-                )
-        elif ref_model is None and not self.is_peft_model:
-            self.ref_model = create_reference_model(self.model, num_shared_layers=num_shared_layers)
-        elif self.is_peft_model:
-            self.ref_model = None
-        else:
-            raise ValueError(
-                f"ref_model must be a PreTrainedModelWrapper or `None`, got {type(ref_model)} - supported "
-                f"architectures are: {SUPPORTED_ARCHITECTURES} "
-            )
 
         if not (isinstance(tokenizer, PreTrainedTokenizer) or isinstance(tokenizer, PreTrainedTokenizerFast)):
             raise ValueError(
@@ -277,10 +246,10 @@ class PPOTrainer(BaseTrainer):
                     "lr_scheduler must be a torch.optim.lr_scheduler._LRScheduler or torch.optim.lr_scheduler.LRScheduler (for torch >= 2.0)"
                 )
 
-        if self.config.adap_kl_ctrl:
-            self.kl_ctl = AdaptiveKLController(self.config.init_kl_coef, self.config.target, self.config.horizon)
-        else:
-            self.kl_ctl = FixedKLController(self.config.init_kl_coef)
+        # if self.config.adap_kl_ctrl:
+        #     self.kl_ctl = AdaptiveKLController(self.config.init_kl_coef, self.config.target, self.config.horizon)
+        # else:
+        self.kl_ctl = FixedKLController(self.config.init_kl_coef)
 
         # Safety checkers for DS integration
         is_deepspeed_used = self.accelerator.distributed_type == "DEEPSPEED" and hasattr(
@@ -296,23 +265,6 @@ class PPOTrainer(BaseTrainer):
         ) = self.accelerator.prepare(
             self.model, self.optimizer, self.data_collator, self.dataloader, self.lr_scheduler
         )
-        if is_deepspeed_used:
-            # 8 bit models are already set on the correct device
-            if not self.is_peft_model and not (
-                getattr(self.ref_model.pretrained_model, "is_loaded_in_8bit", False)
-                or getattr(self.ref_model.pretrained_model, "is_loaded_in_4bit", False)
-            ):
-                # DS integration only allows for single model and as `ref_model` is only used for
-                # `KL devergence loss`,i.e, in eval model, just have it be on the respective device and
-                # there is no need to pass it to the `accelerator.prepare` call
-                self.ref_model = self.ref_model.to(self.accelerator.device)
-
-            # this hack seems to be needed for DS stage 3 to work
-            if self.accelerator.state.deepspeed_plugin.zero_stage == 3:
-                self.model.train()
-        else:
-            self.ref_model = self.accelerator.prepare(self.ref_model)
-
         # In a distributed setup, only logging needs to be performed on the main process
         # check: https://pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html
         # or: https://discuss.pytorch.org/t/use-distributed-data-parallel-correctly/82500/11
@@ -336,7 +288,6 @@ class PPOTrainer(BaseTrainer):
             self.current_device = torch.device("cuda:0")
 
         PPODecorators.optimize_cuda_cache = self.config.optimize_cuda_cache
-
 
     def _filter_kwargs(self, kwargs, target_func):
         """
@@ -409,7 +360,6 @@ class PPOTrainer(BaseTrainer):
         length_sampler: Callable = None,
         batch_size: int = 4,
         return_prompt: bool = True,
-        use_ref_model:bool = False,
         **generation_kwargs,
     ):
         """
@@ -438,16 +388,15 @@ class PPOTrainer(BaseTrainer):
                 length_sampler=length_sampler,
                 batch_size=batch_size,
                 return_prompt=return_prompt,
-                use_ref_model=use_ref_model,
                 **generation_kwargs,
             )
 
         else:
             if length_sampler is not None:
                 generation_kwargs["max_new_tokens"] = length_sampler()
-            ### select model
-            model = self.model if not use_ref_model else self.ref_model
-            response = self.accelerator.unwrap_model(model).generate(input_ids=query_tensor.unsqueeze(dim=0).to(self.current_device), **generation_kwargs)
+            response = self.accelerator.unwrap_model(self.model).generate(
+                input_ids=query_tensor.unsqueeze(dim=0), **generation_kwargs
+            )
 
             if not return_prompt and not self.is_encoder_decoder:
                 return response[:, query_tensor.shape[0] :]
@@ -460,7 +409,6 @@ class PPOTrainer(BaseTrainer):
         batch_size: int = 4,
         return_prompt: bool = True,
         pad_to_multiple_of: int = None,
-        use_ref_model:bool = False,
         **generation_kwargs,
     ):
         outputs = []
@@ -491,8 +439,7 @@ class PPOTrainer(BaseTrainer):
                 return_tensors="pt",
             ).to(self.current_device)
 
-            model = self.model if not use_ref_model else self.ref_model
-            generations = self.accelerator.unwrap_model(model).generate(**padded_inputs, **generation_kwargs)
+            generations = self.accelerator.unwrap_model(self.model).generate(**padded_inputs, **generation_kwargs)
 
             for generation, mask in zip(generations, padded_inputs["attention_mask"]):
                 if not self.is_encoder_decoder:
@@ -574,8 +521,8 @@ class PPOTrainer(BaseTrainer):
         Returns:
             `dict[str, Any]`: A summary of the training statistics
         """
-        # bs = self.config.batch_size
-        bs = len(queries)
+        bs = self.config.batch_size
+
         queries, responses, scores = self._step_safety_checker(bs, queries, responses, scores)
 
         # if we want to push best model to the hub
@@ -621,24 +568,10 @@ class PPOTrainer(BaseTrainer):
         with torch.no_grad():
             all_logprobs, _, values, masks = self.batched_forward_pass(self.model, queries, responses, model_inputs)
 
-            # for when the model is a peft model
-            if self.is_peft_model and hasattr(
-                self.accelerator.unwrap_model(self.model).pretrained_model, "disable_adapter"
-            ):
-                with self.accelerator.unwrap_model(self.model).pretrained_model.disable_adapter():
-                    ref_logprobs, _, _, _ = self.batched_forward_pass(self.model, queries, responses, model_inputs)
-            elif self.is_peft_model and not hasattr(self.model.pretrained_model, "disable_adapter"):
-                raise ValueError(
-                    "You are using a `peft` version that does not support `disable_adapter`. Please update your `peft` version to the latest version."
-                )
-
-            else:
-                ref_logprobs, _, _, _ = self.batched_forward_pass(self.ref_model, queries, responses, model_inputs)
-
         timing["time/ppo/forward_pass"] = time.time() - t
 
         t = time.time()
-        rewards, non_score_reward = self.compute_rewards(scores, all_logprobs, ref_logprobs, masks)
+        rewards, non_score_reward = self.compute_rewards(scores, all_logprobs, masks)
         timing["time/ppo/compute_rewards"] = time.time() - t
 
         # upcast to float32 to avoid dataset issues
@@ -683,9 +616,8 @@ class PPOTrainer(BaseTrainer):
                     logprobs, logits, vpreds, _ = self.batched_forward_pass(
                         self.model, batch["queries"], batch["responses"], model_inputs, return_logits=True
                     )
-                    ##### original code, maybe a bug
-                    # if (i % self.config.gradient_accumulation_steps) == 0:
-                    #     self.optimizer.zero_grad()
+                    if (i % self.config.gradient_accumulation_steps) == 0:
+                        self.optimizer.zero_grad()
 
                     train_stats = self.train_minibatch(
                         batch["logprobs"],
@@ -718,7 +650,6 @@ class PPOTrainer(BaseTrainer):
         stats = self.record_step_stats(
             scores=scores,
             logprobs=all_logprobs,
-            ref_logprobs=ref_logprobs,
             non_score_reward=non_score_reward,
             train_stats=train_stats,
             kl_coef=self.kl_ctl.value,
@@ -734,7 +665,7 @@ class PPOTrainer(BaseTrainer):
         stats["ppo/learning_rate"] = self.optimizer.param_groups[0]["lr"]
 
         # Update the KL control - multiply the batch_size by the number of processes
-        self.kl_ctl.update(stats["objective/kl"], self.config.batch_size * self.accelerator.num_processes)
+        # self.kl_ctl.update(stats["objective/kl"], self.config.batch_size * self.accelerator.num_processes)
 
         # Log the total ppo time
         timing["time/ppo/total"] = time.time() - t0
@@ -853,8 +784,6 @@ class PPOTrainer(BaseTrainer):
             (tuple):
                 - all_logprobs (`torch.FloatTensor`): Log probabilities of the responses,
                     shape (`batch_size`, `response_length`)
-                - all_ref_logprobs (`torch.FloatTensor`): Log probabilities of the responses,
-                    shape (`batch_size`, `response_length`)
                 - all_values (`torch.FloatTensor`): Values of the responses, shape (`batch_size`, `response_length`)
         """
         bs = len(queries)
@@ -956,7 +885,6 @@ class PPOTrainer(BaseTrainer):
 
         t = time.time()
         self.optimizer.step()
-        self.optimizer.zero_grad() ###### added by radyang
         train_stats["time/ppo/optimizer_step"] = torch.Tensor([time.time() - t]).to(self.current_device)
         return train_stats
 
@@ -964,30 +892,23 @@ class PPOTrainer(BaseTrainer):
         self,
         scores: torch.FloatTensor,
         logprobs: torch.FloatTensor,
-        ref_logprobs: torch.FloatTensor,
         masks: torch.LongTensor,
     ):
         """
-        Compute per token rewards from scores and KL-penalty.
-
         Args:
             scores (`torch.FloatTensor`):
                 Scores from the reward model, shape (`batch_size`)
             logprobs (`torch.FloatTensor`):
                 Log probabilities of the model, shape (`batch_size`, `response_length`)
-            ref_logprobs (`torch.FloatTensor`):
-                Log probabilities of the reference model, shape (`batch_size`, `response_length`)
         """
         rewards, non_score_rewards = [], []
-        for score, logprob, ref_logprob, mask in zip(scores, logprobs, ref_logprobs, masks):
-            # compute KL penalty (from difference in logprobs)
-            kl = logprob - ref_logprob
-            non_score_reward = -self.kl_ctl.value * kl
+        for score, logprob, mask in zip(scores, logprobs, masks):
+            non_score_reward = torch.zeros_like(logprob)
             non_score_rewards.append(non_score_reward)
             reward = non_score_reward.clone()
             last_non_masked_index = mask.nonzero()[-1]
 
-            # reward is preference model score + KL penalty
+            # reward is preference model score 
             reward[last_non_masked_index] += score
             rewards.append(reward)
         return torch.stack(rewards), torch.stack(non_score_rewards)
@@ -1100,8 +1021,6 @@ class PPOTrainer(BaseTrainer):
         """
         mask = data.pop("masks")
 
-        kl_list = ((data["logprobs"] - data["ref_logprobs"]) * mask).sum(axis=-1)
-        mean_kl = kl_list.mean()
         mean_entropy = (-data["logprobs"] * mask).sum(axis=-1).mean()
 
         mean_non_score_reward = masked_mean(
@@ -1110,19 +1029,8 @@ class PPOTrainer(BaseTrainer):
         mean_scores = torch.stack(data["scores"]).mean()  # scores is size `batch_size`
         std_scores = torch.stack(data["scores"]).std()
 
-        if mean_kl.item() < -1.0:
-            # warn users
-            warnings.warn(
-                f"KL divergence is starting to become negative: {mean_kl.item():.2f} - this might be a precursor for failed training."
-                " sometimes this happens because the generation kwargs are not correctly set. Please make sure"
-                " that the generation kwargs are set correctly, or review your training hyperparameters."
-            )
-
         stats = {
-            "objective/kl": mean_kl,
-            "objective/kl_dist": kl_list,
             "objective/logprobs": data["logprobs"],
-            "objective/ref_logprobs": data["ref_logprobs"],
             "objective/kl_coef": kl_coef,
             "objective/entropy": mean_entropy,
             "ppo/mean_non_score_reward": mean_non_score_reward,
@@ -1246,4 +1154,4 @@ class PPOTrainer(BaseTrainer):
     def _save_pretrained(self, save_directory: str) -> None:
         self.accelerator.unwrap_model(self.model).save_pretrained(save_directory)
         self.tokenizer.save_pretrained(save_directory)
-        self.create_model_card(save_directory)
+        # self.create_model_card(save_directory)
