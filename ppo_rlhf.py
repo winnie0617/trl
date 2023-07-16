@@ -60,7 +60,7 @@ class ScriptArguments:
     """
     The name of the Casual LM model we wish to fine with PPO
     """
-    model_name: Optional[str] = field(default='/home/xiongwei/LMFlow/output_models/clean_llama_7b_sft_1epoch', metadata={"help": "the model name"})
+    model_name: Optional[str] = field(default='/home/xiongwei/LMFlow/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default='wandb', metadata={"help": "use 'wandb' to log with wandb"})
     save_directory: Optional[str] = field(default='/home/yangrui/wchow/trl/logs_trl/')
     epochs: Optional[int] = field(default=1, metadata={'help': "Number of training epoches"})
@@ -203,12 +203,12 @@ tokenizer.add_special_tokens(
     }
 )
 
-
-data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/train_prompt.json"
+rm_path = "/home/yangrui/wchow/output_models/rm_finetune-gpt-neo_bs_7_20/rm_0"
+data_path = "/home/yangrui/wchow/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
 # eval_data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/eval_prompt.json"
 # eval_dataset = build_dataset(config, tokenizer, eval_data_path)
-rm_tokenizer = AutoTokenizer.from_pretrained("/apdcephfs/private_radyang/trl/examples/rlhf/data/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4")
+rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
@@ -220,12 +220,12 @@ device = ppo_trainer.accelerator.device
 
 sentiment_pipe = pipeline(
     "sentiment-analysis",
-    model="/apdcephfs/private_radyang/trl/examples/rlhf/data/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4",
+    model=rm_path,
     device=pipeline_gpu_id,
     # device='auto'
     tokenizer=rm_tokenizer
     )
-
+sentiment_pipe.tokenizer.pad_token_id = sentiment_pipe.model.config.eos_token_id
 
 
 
