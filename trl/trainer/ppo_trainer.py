@@ -1151,6 +1151,7 @@ class PPOTrainer(BaseTrainer):
         stats: dict,
         batch: dict,
         rewards: List[torch.FloatTensor],
+        stds=None
     ):
         """
         A function that logs all the training stats. Call it at the end of each epoch.
@@ -1201,10 +1202,12 @@ class PPOTrainer(BaseTrainer):
             logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
             logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
             logs["env/reward_dist"] = rewards.cpu().numpy()
+            logs["env/std_mean"] = torch.mean(stds).cpu().numpy().item()
 
             logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
             logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
             logs["env/reward_dist"] = rewards.cpu().numpy()
+            logs["env/std_mean"] = torch.mean(stds).cpu().numpy().item()
 
             if self.config.log_with == "tensorboard":
                 # update the current step

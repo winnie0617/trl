@@ -23,5 +23,6 @@ from .utils import AdaptiveKLController, FixedKLController, ConstantLengthDatase
 from .base import BaseTrainer
 from .ppo_config import PPOConfig
 from .ppo_trainer import PPOTrainer
+from .ppo_simple_trainer import PPOVanillaTrainer
 from .reward_trainer import RewardTrainer, compute_accuracy
 from .sft_trainer import SFTTrainer

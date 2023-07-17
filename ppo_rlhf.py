@@ -206,7 +206,8 @@ tokenizer.add_special_tokens(
     }
 )
 
-rm_path = "/home/share/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4"
+rm_dir = "/home/share/rewardmodels"
+# rm_path = "/home/share/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4"
 data_path = f"{root_dir}/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
 # eval_data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/eval_prompt.json"
@@ -221,16 +222,25 @@ ppo_trainer = PPOTrainer(
 )
 device = ppo_trainer.accelerator.device
 
-sentiment_pipe = pipeline(
-    "sentiment-analysis",
-    model=rm_path,
-    device=pipeline_gpu_id,
-    # device='auto'
-    tokenizer=rm_tokenizer
-    )
-sentiment_pipe.tokenizer.pad_token_id = sentiment_pipe.model.config.eos_token_id
+# sentiment_pipe = pipeline(
+#     "sentiment-analysis",
+#     model=rm_path,
+#     device=pipeline_gpu_id,
+#     # device='auto'
+#     tokenizer=rm_tokenizer
+#     )
 
 
+sentiment_pipes = []
+files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6"]
+# for filename in os.listdir(rm_dir):
+for i, filename in enumerate(files):
+    f = os.path.join(rm_dir, filename)
+    pipe = pipeline("sentiment-analysis", model=f, device=pipeline_gpu_id+i, tokenizer=rm_tokenizer)
+    pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+    sentiment_pipes.append(pipe)
+
+k = len(sentiment_pipes)
 
 # We then define the arguments to pass to the `generate` function. These arguments
 # are passed to the `generate` function of the PPOTrainer, which is a wrapper around
@@ -277,18 +287,28 @@ for epoch in range(epochs):
         response_tensors = [response_tensors[j][:np.max([lengths[j], 1])] for j in range(len(response_tensors))]
         batch['response'] = clean_texts
 
-     
         texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
-        pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
-        rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
+        rewards = torch.zeros(k, config.batch_size)
+        for i, sentiment_pipe in enumerate(sentiment_pipes):
+            pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
+            # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
+            rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
 
-        print("iter {}, batch {}: mean score: {}".format(epoch, i, np.mean(rewards)))
-        reward_record.append(np.mean(rewards))
+        rewards_mean = rewards.mean(axis=0)
+        print(rewards_mean)
+        rewards_std = rewards.std(axis=0)
+
+        penalized_rewards = rewards_mean - 0.1 * rewards_std # TODO: remove hard-coding
+        print(penalized_rewards)
+
+        batch_rewards_mean = rewards_mean.float().mean().item()
+        print("iter {}, batch {}: mean score: {}, std: {}".format(epoch, i, batch_rewards_mean, rewards_std.mean().item()))
+        reward_record.append(batch_rewards_mean)
 
         model.gradient_checkpointing_enable()
         model.pretrained_model.config.use_cache = False
-        stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
-        ppo_trainer.log_stats(stats, batch, rewards)
+        stats = ppo_trainer.step(query_tensors, response_tensors, [torch.tensor(r) for r in penalized_rewards]) # rewards must be a list of tensors
+        ppo_trainer.log_stats(stats, batch, rewards_mean, stds=rewards_std) 
         print("iter {}, batch {}: log finish".format(epoch, i))
 
 

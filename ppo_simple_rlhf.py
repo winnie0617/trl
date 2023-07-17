@@ -40,15 +40,19 @@ from peft import LoraConfig
 # If you want to log with tensorboard, add the kwarg
 # `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
 # Define and parse arguments.
+
+root_dir = "/home/winnie"
+# root_dir = "/home/xiongwei/wchow"
+
 @dataclass
 class ScriptArguments:
     """
     The name of the Casual LM model we wish to fine with PPO
     """
     # model_name: Optional[str] = field(default='/apdcephfs/private_radyang/trl/examples/rlhf/data/hh_rlhf_llama_7b_sft_on_relabel_set_blocksize_1024', metadata={"help": "the model name"})
-    model_name: Optional[str] = field(default='/apdcephfs/private_radyang/trl/examples/rlhf/data/clean_reward_models/clean_llama_7b_sft_1epoch', metadata={"help": "the model name"})
+    model_name: Optional[str] = field(default=f'{root_dir}/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default='wandb', metadata={"help": "use 'wandb' to log with wandb"})
-    save_directory: Optional[str] = field(default='/apdcephfs/private_radyang/logs_trl/')
+    save_directory: Optional[str] = field(default=f'{root_dir}//trl/logs_trl/')    
     epochs: Optional[int] = field(default=1, metadata={'help': "Number of training epoches"})
     learning_rate: Optional[float] = field(default=1e-5, metadata={"help": "the learning rate"})
     mini_batch_size: Optional[int] = field(default=1, metadata={"help": "the PPO minibatch size"})
@@ -102,7 +106,7 @@ def build_dataset(config, tokenizer, dataset_name=''):
         dataloader (`torch.utils.data.DataLoader`):
             The dataloader for the dataset.
     """
-    ds = load_dataset("json", data_files=dataset_name, split="train")['instances'][0]
+    ds = load_dataset("json", data_fildes=dataset_name, split="train")['instances'][0]
     texts = [sample['text'] for sample in ds]
 
     ds = Dataset.from_dict({
@@ -141,6 +145,23 @@ lora_config = LoraConfig(
 )
 
 process_id = Accelerator().local_process_index
+gpu_id_map = {
+    0: 0,
+    1: 1,
+    2: 2,
+    3: 3
+}
+pipeline_gpu_id_map = {
+    0: 4,
+    1: 5,
+    2: 6,
+    3: 7
+}
+
+gpu_id = gpu_id_map[process_id]
+pipeline_gpu_id = pipeline_gpu_id_map[process_id]
+print('process: {}, model gpu id: {}, pipline gpu id: {}'.format(process_id, gpu_id, pipeline_gpu_id))
+
 
 
 model = AutoModelForCausalLMWithValueHead.from_pretrained(
@@ -172,12 +193,13 @@ tokenizer.add_special_tokens(
 # tokenizer.pad_token_id = tokenizer.eos_token_id
 # tokenizer.padding_side = "left"
 
-# data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/train_prompt.json"
-data_path = '/apdcephfs/private_radyang/trl/examples/rlhf/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json'
+rm_dir = "/home/share/rewardmodels"
+# rm_path = "/home/share/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4"
+data_path = f"{root_dir}/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
-##############
-# rm_tokenizer = AutoTokenizer.from_pretrained("/apdcephfs/private_radyang/trl/examples/rlhf/data/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4")
-rm_tokenizer = AutoTokenizer.from_pretrained("/apdcephfs/private_radyang/trl/examples/rlhf/data/clean_reward_models/clean_gpt_neo_2_7b_1")
+# eval_data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/eval_prompt.json"
+# eval_dataset = build_dataset(config, tokenizer, eval_data_path)
+rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
@@ -190,13 +212,25 @@ ppo_trainer = PPOVanillaTrainer(
 # to the same device as the PPOTrainer.
 device = ppo_trainer.accelerator.device
 
-sentiment_pipe = pipeline(
-    "sentiment-analysis",
-    # model="/apdcephfs/private_radyang/trl/examples/rlhf/data/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4",\
-    model="/apdcephfs/private_radyang/trl/examples/rlhf/data/clean_reward_models/clean_gpt_neo_2_7b_1",
-    device=device,
-    # device='auto'
-    )
+# sentiment_pipe = pipeline(
+#     "sentiment-analysis",
+#     model=rm_path,
+#     device=pipeline_gpu_id,
+#     # device='auto'
+#     tokenizer=rm_tokenizer
+#     )
+
+
+sentiment_pipes = []
+files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6"]
+# for filename in os.listdir(rm_dir):
+for i, filename in enumerate(files):
+    f = os.path.join(rm_dir, filename)
+    pipe = pipeline("sentiment-analysis", model=f, device=pipeline_gpu_id+i, tokenizer=rm_tokenizer)
+    pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+    sentiment_pipes.append(pipe)
+
+k = len(sentiment_pipes)
 
 
 # We then define the arguments to pass to the `generate` function. These arguments
@@ -245,17 +279,27 @@ for epoch in range(epochs):
 
         # Compute score
         texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
-        pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
-        rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
+        rewards = torch.zeros(k, config.batch_size)
+        for i, sentiment_pipe in enumerate(sentiment_pipes):
+            pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
+            # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
+            rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
 
-        print("iter {}, batch {}: mean score: {}".format(epoch, i, np.mean(rewards)))
-        reward_record.append(np.mean(rewards))
+        rewards_mean = rewards.mean(axis=0)
+        print(rewards_mean)
+        rewards_std = rewards.std(axis=0)
 
+        penalized_rewards = rewards_mean - 0.1 * rewards_std # TODO: remove hard-coding
+        print(penalized_rewards)
+
+        batch_rewards_mean = rewards_mean.float().mean().item()
+        print("iter {}, batch {}: mean score: {}, std: {}".format(epoch, i, batch_rewards_mean, rewards_std.mean().item()))
+        reward_record.append(batch_rewards_mean)
 
         model.gradient_checkpointing_enable()
         model.pretrained_model.config.use_cache = False
-        stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
-        ppo_trainer.log_stats(stats, batch, rewards)
+        stats = ppo_trainer.step(query_tensors, response_tensors, [torch.tensor(r) for r in penalized_rewards]) # rewards must be a list of tensors
+        ppo_trainer.log_stats(stats, batch, rewards_mean, stds=rewards_std) 
         print("iter {}, batch {}: log finish".format(epoch, i))
 
 
