@@ -52,7 +52,7 @@ class ScriptArguments:
     # model_name: Optional[str] = field(default='/apdcephfs/private_radyang/trl/examples/rlhf/data/hh_rlhf_llama_7b_sft_on_relabel_set_blocksize_1024', metadata={"help": "the model name"})
     model_name: Optional[str] = field(default=f'{root_dir}/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default='wandb', metadata={"help": "use 'wandb' to log with wandb"})
-    save_directory: Optional[str] = field(default=f'{root_dir}//trl/logs_trl/')    
+    save_directory: Optional[str] = field(default=f'{root_dir}/trl/logs_trl/')    
     epochs: Optional[int] = field(default=1, metadata={'help': "Number of training epoches"})
     learning_rate: Optional[float] = field(default=1e-5, metadata={"help": "the learning rate"})
     mini_batch_size: Optional[int] = field(default=1, metadata={"help": "the PPO minibatch size"})
@@ -84,7 +84,7 @@ config = PPOConfig(
     max_grad_norm=script_args.max_grad_norm,
     optimize_cuda_cache=True,
     init_kl_coef=script_args.init_kl_coef,
-    wandb_name=script_args.wandb_name,
+    wandb_name=f"ppo_llamavanilla_gradaccu1_gradnorm1_bs{script_args.batch_size * 8}_clean###",
     save_directory=script_args.save_directory
 )
 
@@ -106,7 +106,7 @@ def build_dataset(config, tokenizer, dataset_name=''):
         dataloader (`torch.utils.data.DataLoader`):
             The dataloader for the dataset.
     """
-    ds = load_dataset("json", data_fildes=dataset_name, split="train")['instances'][0]
+    ds = load_dataset("json", data_files=dataset_name, split="train")['instances'][0]
     texts = [sample['text'] for sample in ds]
 
     ds = Dataset.from_dict({
@@ -132,7 +132,7 @@ def collator(data):
 # set seed before initializing value head for deterministic eval
 set_seed(8888)
 current_device = Accelerator().local_process_index
-print(current_device)
+print("Accelerator local_process_index", current_device)
 
 # Now let's build the model, the reference model, and the tokenizer.
 # model = AutoModelForCausalLMWithValueHead.from_pretrained(config.model_name)
@@ -207,10 +207,11 @@ optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters(
 ppo_trainer = PPOVanillaTrainer(
     config, model, tokenizer=tokenizer, dataset=dataset, data_collator=collator, optimizer=optimizer
 )
+print("PPO Trainer Number Processes", ppo_trainer.accelerator.num_processes)
 # We then build the sentiment analysis pipeline, passing the model name and the
 # sentiment analysis pipeline arguments. Let's also make sure to set the device
 # to the same device as the PPOTrainer.
-device = ppo_trainer.accelerator.device
+# device = ppo_trainer.accelerator.device
 
 # sentiment_pipe = pipeline(
 #     "sentiment-analysis",
@@ -258,9 +259,9 @@ model.gradient_checkpointing_disable()
 model.pretrained_model.config.use_cache = True
 epochs = script_args.epochs
 for epoch in range(epochs):
-    for i, batch in enumerate(ppo_trainer.dataloader):
+    for batch_i, batch in enumerate(ppo_trainer.dataloader):
+        print("PPO Device", ppo_trainer.current_device)
         query_tensors = batch["input_ids"]
-
         model.gradient_checkpointing_disable()
         model.pretrained_model.config.use_cache = True
 
@@ -281,30 +282,29 @@ for epoch in range(epochs):
         texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
         rewards = torch.zeros(k, config.batch_size)
         for i, sentiment_pipe in enumerate(sentiment_pipes):
+            print("Pipe device", sentiment_pipe.device)
             pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
             # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
             rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
 
         rewards_mean = rewards.mean(axis=0)
-        print(rewards_mean)
         rewards_std = rewards.std(axis=0)
 
         penalized_rewards = rewards_mean - 0.1 * rewards_std # TODO: remove hard-coding
-        print(penalized_rewards)
 
         batch_rewards_mean = rewards_mean.float().mean().item()
-        print("iter {}, batch {}: mean score: {}, std: {}".format(epoch, i, batch_rewards_mean, rewards_std.mean().item()))
+        print("iter {}, batch {}: mean score: {}, std: {}".format(epoch, batch_i, batch_rewards_mean, rewards_std.mean().item()))
         reward_record.append(batch_rewards_mean)
 
         model.gradient_checkpointing_enable()
         model.pretrained_model.config.use_cache = False
         stats = ppo_trainer.step(query_tensors, response_tensors, [torch.tensor(r) for r in penalized_rewards]) # rewards must be a list of tensors
         ppo_trainer.log_stats(stats, batch, rewards_mean, stds=rewards_std) 
-        print("iter {}, batch {}: log finish".format(epoch, i))
+        print("iter {}, batch {}: log finish".format(epoch, batch_i))
 
 
         # save model
         if process_id == 0:
-            save_path = os.path.join(config.save_directory, config.wandb_name, 'batch_{}'.format(i))
+            save_path = os.path.join(config.save_directory, config.wandb_name, 'batch_{}'.format(batch_i))
             ppo_trainer.save_pretrained(save_path)
-            print("iter {}, batch {}: model saved".format(epoch, i))
+            print("iter {}, batch {}: model saved".format(epoch, batch_i))
