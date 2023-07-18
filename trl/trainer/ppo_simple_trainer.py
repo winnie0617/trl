@@ -1088,9 +1088,14 @@ class PPOVanillaTrainer(BaseTrainer):
                 )
             elif self.config.log_with == "wandb":
                 import wandb
-
-                table_rows = [list(r) for r in zip(batch["query"], batch["response"], rewards.cpu().tolist())]
-                logs.update({"game_log": wandb.Table(columns=["query", "response", "reward"], rows=table_rows)})
+                if stds is not None:
+                    table_rows = [list(r) for r in zip(batch["query"], batch["response"], rewards.cpu().tolist(), stds.cpu().tolist())]
+                    logs.update({"game_log": wandb.Table(columns=["query", "response", "raw_reward", "std"], rows=table_rows)})
+                else:
+                    table_rows = [list(r) for r in zip(batch["query"], batch["response"], rewards.cpu().tolist())]
+                    logs.update({"game_log": wandb.Table(columns=["query", "response", "reward"], rows=table_rows)})
+            # All reduce rewards if distributed
+                
             # All reduce rewards if distributed
             if self.is_distributed:
                 import torch.distributed as dist
@@ -1099,6 +1104,10 @@ class PPOVanillaTrainer(BaseTrainer):
 
                 dist.all_reduce(rewards, op=torch.distributed.ReduceOp.SUM)
                 rewards /= self.accelerator.num_processes
+
+                if stds is not None:
+                    dist.all_reduce(stds, op=torch.distributed.ReduceOp.SUM)
+                    stds /= self.accelerator.num_processes
 
             logs.update(stats)
 
@@ -1111,11 +1120,12 @@ class PPOVanillaTrainer(BaseTrainer):
             logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
             logs["env/reward_dist"] = rewards.cpu().numpy()
             logs["env/std_mean"] = torch.mean(stds).cpu().numpy().item()
+            logs["env/std_dist"] = stds.cpu().numpy()
 
             logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
             logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
             logs["env/reward_dist"] = rewards.cpu().numpy()
-            logs["env/std_mean"] = torch.mean(stds).cpu().numpy().item()
+            logs["env/std_dist"] = stds.cpu().numpy()
             
             if self.config.log_with == "tensorboard":
                 # update the current step
@@ -1132,6 +1142,9 @@ class PPOVanillaTrainer(BaseTrainer):
 
                 dist.barrier()
                 dist.all_reduce(rewards, op=torch.distributed.ReduceOp.SUM)
+
+                if stds is not None:
+                    dist.all_reduce(stds, op=torch.distributed.ReduceOp.SUM)
 
     def create_model_card(self, path: str, model_name: Optional[str] = "TRL Model") -> None:
         """Creates and saves a model card for a TRL model.

@@ -163,9 +163,8 @@ process_id = Accelerator().local_process_index
 # pipeline_gpu_id = pipeline_gpu_id_map[process_id]
 
 gpu_id = process_id
-# pipeline_gpu_id_start = process_id + 1
-# print('process: {}, model gpu id: {}, pipline gpu id: {}'.format(process_id, gpu_id, pipeline_gpu_id_start))
-print('process: {}, model gpu id: {}'.format(process_id, gpu_id))
+pipeline_gpu_id_start = process_id + 1
+print('process: {}, model gpu id: {}, pipline gpu id: {}'.format(process_id, gpu_id, pipeline_gpu_id_start))
 
 
 
@@ -206,8 +205,6 @@ dataset = build_dataset(config, tokenizer, data_path)
 # eval_dataset = build_dataset(config, tokenizer, eval_data_path)
 rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
-files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6"]
-k = len(files)
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
 
@@ -230,6 +227,18 @@ print("Total Batch Size", ppo_trainer.accelerator.num_processes * config.batch_s
 #     tokenizer=rm_tokenizer
 #     )
 
+
+sentiment_pipes = []
+# files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6"]
+files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7"]
+# for filename in os.listdir(rm_dir):
+for i, filename in enumerate(files):
+    f = os.path.join(rm_dir, filename)
+    pipe = pipeline("sentiment-analysis", model=f, device=pipeline_gpu_id_start+i, tokenizer=rm_tokenizer)
+    pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+    sentiment_pipes.append(pipe)
+
+k = len(sentiment_pipes)
 
 
 # We then define the arguments to pass to the `generate` function. These arguments
@@ -278,16 +287,8 @@ for epoch in range(epochs):
         # Compute score
         texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
         rewards = torch.zeros(k, config.batch_size)
-
-        sentiment_pipes = []
-
-        # for filename in os.listdir(rm_dir):
-        for i, filename in enumerate(files):
-            print(f"Process {process_id}, Loading model {i}")
-            f = os.path.join(rm_dir, filename)
-            pipe = pipeline("sentiment-analysis", model=f, device=process_id, tokenizer=rm_tokenizer)
-            pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
-            pipe_outputs = pipe(texts_for_rewards, **sent_kwargs)
+        for i, sentiment_pipe in enumerate(sentiment_pipes):
+            pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
             # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
             rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
 
