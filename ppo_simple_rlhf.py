@@ -206,7 +206,8 @@ dataset = build_dataset(config, tokenizer, data_path)
 # eval_dataset = build_dataset(config, tokenizer, eval_data_path)
 rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
-files = ["rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6"]
+# files = ["rm_2sft_full_train_1epoch_llama_13b/merged_rm", "rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
+files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
 k = len(files)
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
@@ -290,6 +291,7 @@ for epoch in range(epochs):
             pipe_outputs = pipe(texts_for_rewards, **sent_kwargs)
             # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
             rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
+        pipe = None # Free memory (?)
 
         rewards_mean = rewards.mean(axis=0).to(ppo_trainer.current_device)
         rewards_std = rewards.std(axis=0).to(ppo_trainer.current_device)
