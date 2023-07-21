@@ -85,7 +85,7 @@ config = PPOConfig(
     max_grad_norm=script_args.max_grad_norm,
     optimize_cuda_cache=True,
     init_kl_coef=script_args.init_kl_coef,
-    wandb_name=f"ppo_llamavanilla_gradaccu1_gradnorm1_bs{script_args.batch_size * 8}_coef{script_args.uncertainty_coef}",
+    wandb_name=f"ppo_llamavanilla_gradaccu1_gradnorm1_bs{script_args.batch_size * torch.cuda.device_count()}_coef{script_args.uncertainty_coef}",
     save_directory=script_args.save_directory,
 )
 
@@ -198,7 +198,7 @@ tokenizer.add_special_tokens(
 # tokenizer.pad_token_id = tokenizer.eos_token_id
 # tokenizer.padding_side = "left"
 
-rm_dir = "/home/share/rewardmodels"
+rm_dir = f"{root_dir}/output_models/rms"
 # rm_path = "/home/share/rewardmodels/rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4"
 data_path = f"{root_dir}/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
@@ -207,8 +207,12 @@ dataset = build_dataset(config, tokenizer, data_path)
 rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
 # files = ["rm_2sft_full_train_1epoch_llama_13b/merged_rm", "rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
-files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
+# files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
+files = [f"0715_relabel_rm_gpt_neo_2_7b_5e-6_1epoch_{i}" for i in range(1,7)]
 k = len(files)
+
+means_rms = torch.tensor([1.8175465893000364,1.9616623278707266,1.91334992274642,0.6972120497375727,1.1580963432788849,2.7236480712890625])
+stds_rms = torch.tensor([1.1722500539476755,1.2413885538391234,1.1708371368464998,1.308637960323578,1.3141790084902882,1.1942363257298647])
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
 
@@ -292,6 +296,13 @@ for epoch in range(epochs):
             # rewards[i,:] = (torch.tensor([output[0]["score"] for output in pipe_outputs]) - rms_mean[i]) / rms_std[i]
             rewards[i,:] = torch.tensor([output[0]["score"] for output in pipe_outputs])
         pipe = None # Free memory (?)
+
+        # Normalize rewards
+        print("Before norm")
+        print(rewards)
+        rewards = (rewards - means_rms.reshape(k, 1).expand(rewards.shape)) / stds_rms.reshape(k, 1).expand(rewards.shape)
+        print("after norm")
+        print(rewards)
 
         rewards_mean = rewards.mean(axis=0).to(ppo_trainer.current_device)
         rewards_std = rewards.std(axis=0).to(ppo_trainer.current_device)
