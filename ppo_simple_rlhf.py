@@ -41,8 +41,9 @@ from peft import LoraConfig
 # `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
 # Define and parse arguments.
 
-root_dir = "/home/winnie"
-# root_dir = "/home/xiongwei/wchow"
+# root_dir = "/home/winnie"
+root_dir = "/home/yangrui/wchow"
+print("COUNT", torch.cuda.device_count())
 
 @dataclass
 class ScriptArguments:
@@ -207,7 +208,8 @@ dataset = build_dataset(config, tokenizer, data_path)
 rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
 
 # files = ["rm_2sft_full_train_1epoch_llama_13b/merged_rm", "rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
-files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
+# files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
+files = [f"0715_relabel_rm_gpt_neo_2_7b_5e-6_1epoch_{i}" for i in range(1,7)]
 k = len(files)
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
