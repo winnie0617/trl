@@ -299,11 +299,7 @@ for epoch in range(epochs):
         pipe = None # Free memory (?)
 
         # Normalize rewards
-        print("Before norm")
-        print(rewards)
         rewards = (rewards - means_rms.reshape(k, 1).expand(rewards.shape)) / stds_rms.reshape(k, 1).expand(rewards.shape)
-        print("after norm")
-        print(rewards)
 
         rewards_mean = rewards.mean(axis=0).to(ppo_trainer.current_device)
         rewards_std = rewards.std(axis=0).to(ppo_trainer.current_device)
