@@ -66,7 +66,7 @@ class ScriptArguments:
     init_kl_coef: Optional[float] = field(default=0.01,metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},)
     max_grad_norm: Optional[float] = field(default=1, metadata={"help": "Maximum gradient norm for gradient clipping"})
     wandb_name: Optional[str] = field(default='ppo_llamavanilla_gradaccu1_gradnorm1_bs2048_clean###', metadata={"help": "Name for this experiment"})
-    uncertainty_coef: Optional[float] = field(default=0.1,metadata={"help": "Uncertainty penalty coefficient"},)
+    uncertainty_coef: Optional[float] = field(default=0.5,metadata={"help": "Uncertainty penalty coefficient"},)
 
 
 parser = HfArgumentParser(ScriptArguments)
@@ -249,8 +249,8 @@ generation_kwargs = {
     "eos_token_id": 100_000,  
     # "eos_token_id": tokenizer.eos_token_id,
 }
-output_min_length = 96
-output_max_length = 128
+output_min_length = 196
+output_max_length = 256
 output_length_sampler = LengthSampler(output_min_length, output_max_length)
 reward_record = []
 
