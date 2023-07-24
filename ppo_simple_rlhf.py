@@ -250,8 +250,8 @@ generation_kwargs = {
     "eos_token_id": 100_000,  
     # "eos_token_id": tokenizer.eos_token_id,
 }
-output_min_length = 196
-output_max_length = 256
+output_min_length = 96
+output_max_length = 128
 output_length_sampler = LengthSampler(output_min_length, output_max_length)
 reward_record = []
 
