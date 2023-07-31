@@ -41,8 +41,8 @@ from peft import LoraConfig
 # `accelerator_kwargs={"logging_dir": PATH_TO_LOGS}` to the PPOConfig.
 # Define and parse arguments.
 
-# root_dir = "/home/winnie"
-root_dir = "/home/yangrui/wchow"
+root_dir = "/home/winnie"
+# root_dir = "/home/yangrui/wchow"
 print("COUNT", torch.cuda.device_count())
 
 @dataclass
