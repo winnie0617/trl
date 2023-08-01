@@ -69,15 +69,15 @@ class ScriptArguments:
     model_name: Optional[str] = field(default='/home/winnie/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
     # Model to be evaluated
-    peft_model_path: Optional[str] = field(default='/home/winnie/trl/logs_trl/ppo_llamavanilla_gradaccu1_gradnorm1_bs512_coef0.3')
+    peft_model_path: Optional[str] = field(default='/home/winnie/trl/logs_trl/ppo_llamavanilla_gradaccu1_gradnorm1_bs2048_coef0.5')
     # Gold model:
     reward_model_path: Optional[str] = field(default='/home/winnie/output_models/0715_openllama_13b_gold_rm_2sft_lora16_3e-5_1epoch_1x8x2bs/merged_rm_715')
     test_data: Optional[bool] = field(default=False)
 
-size = 300 # size of dataset to use (might be smaller than this because some samples are too long)
+size = 1024 # size of dataset to use (might be smaller than this because some samples are too long)
 model_gpu = 0
 # reference_gpu = 1
-reward_gpu = 1
+reward_gpu = 13
 
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
@@ -228,7 +228,7 @@ def evaluate(ppo_trainer, dataset):
 model = AutoModelForCausalLMWithValueHead.from_pretrained(
         script_args.model_name,
         load_in_8bit=True,
-        # torch_dtype=torch.bfloat16, 
+        torch_dtype=torch.bfloat16, 
         peft_config=lora_config,
         device_map=model_gpu,
     )
@@ -248,7 +248,7 @@ torch.cuda.empty_cache()
 
 # df_results = pd.DataFrame()
 peft_model_num_start = 0
-peft_model_num_end = 26
+peft_model_num_end = 22
 for k in range(peft_model_num_start, peft_model_num_end):
     peft_model_path = os.path.join(script_args.peft_model_path, 'batch_{}'.format(k))
     print('++++++++++++++++++++++++')
@@ -260,7 +260,7 @@ for k in range(peft_model_num_start, peft_model_num_end):
     model = AutoModelForCausalLMWithValueHead.from_pretrained(
         peft_model_path,
         load_in_8bit=True,
-        # torch_dtype=torch.bfloat16, 
+        torch_dtype=torch.bfloat16, 
         peft_config=lora_config,
         device_map=model_gpu,
     )
@@ -280,7 +280,7 @@ for k in range(peft_model_num_start, peft_model_num_end):
     df_results['batch{}/response'.format(k)] = train_model_res['response']
     df_results['batch{}/score'.format(k)] = train_model_res['score']
     print(np.mean(train_model_res['score']))
-    df_results.to_csv('PPOVanilla_newRM0.9999_test{}_num{}_{}_8bit_tmp.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end))
+    df_results.to_csv('coef0.5_test{}_num{}_{}_8bit_tmp.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end))
 
     ## del ppo_trainer, model, ref_model
     import gc 
@@ -289,7 +289,7 @@ for k in range(peft_model_num_start, peft_model_num_end):
     gc.collect()
     torch.cuda.empty_cache()
 
-df_results.to_csv(datetime.now().strftime('PPOVanilla_8bit_newRM0.9999_test{}_num{}_{}_%Y_%m_%d_%H_%M.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end)))
+df_results.to_csv(datetime.now().strftime('coef0.5_test{}_num{}_{}_%Y_%m_%d_%H_%M.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end)))
 
 
 
