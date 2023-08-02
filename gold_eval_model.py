@@ -65,7 +65,7 @@ class ScriptArguments:
     """
     The name of the Casual LM model we wish to fine with PPO
     """
-    # reference model?
+    # reference model
     model_name: Optional[str] = field(default='/home/winnie/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
     log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
     # Model to be evaluated
@@ -75,9 +75,14 @@ class ScriptArguments:
     test_data: Optional[bool] = field(default=False)
 
 size = 1024 # size of dataset to use (might be smaller than this because some samples are too long)
-model_gpu = 0
+# models on gpu 0,1,2,3 gold on gpu 4,5,6,7
+num_processes = torch.cuda.device_count()
+current_device = Accelerator().local_process_index
+model_gpu = current_device
 # reference_gpu = 1
-reward_gpu = 13
+reward_gpu = current_device + (num_processes // 2)
+reward_gpu = 1
+print(f"process: {current_device}, gold rm on {reward_gpu}, models on {model_gpu}")
 
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
@@ -225,41 +230,45 @@ def evaluate(ppo_trainer, dataset):
     batch['score'] = rewards
     return batch
 
-model = AutoModelForCausalLMWithValueHead.from_pretrained(
-        script_args.model_name,
-        load_in_8bit=True,
-        torch_dtype=torch.bfloat16, 
-        peft_config=lora_config,
-        device_map=model_gpu,
-    )
-config.model_name = script_args.model_name
-ppo_trainer = PPOVanillaTrainer(config, model, tokenizer=tokenizer)
-train_refmodel_res = evaluate(ppo_trainer, train_dataset)
-print(np.mean(train_refmodel_res['score']))
-df_results = pd.DataFrame(train_refmodel_res)
-df_results.rename(columns={"response": "reference/response", "score": "reference/score"})
-import gc 
-del model
-del ppo_trainer
-gc.collect()
-torch.cuda.empty_cache()
+### REFERENCE MODEL, NO NEED
+# model = AutoModelForCausalLMWithValueHead.from_pretrained(
+#         script_args.model_name,
+#         load_in_8bit=True,
+#         torch_dtype=torch.bfloat16, 
+#         peft_config=lora_config,
+#         device_map=model_gpu,
+#     )
+# config.model_name = script_args.model_name
+# ppo_trainer = PPOVanillaTrainer(config, model, tokenizer=tokenizer)
+# train_refmodel_res = evaluate(ppo_trainer, train_dataset)
+# print(np.mean(train_refmodel_res['score']))
+# df_results = pd.DataFrame(train_refmodel_res)
+# df_results.rename(columns={"response": "reference/response", "score": "reference/score"})
+# import gc 
+# del model
+# del ppo_trainer
+# gc.collect()
+# torch.cuda.empty_cache()
 
 # Prepare models to be evaluated
 
-# df_results = pd.DataFrame()
-peft_model_num_start = 0
-peft_model_num_end = 22
+
+
+df_results = pd.DataFrame()
+peft_model_num_start = 17
+peft_model_num_end = 23
 for k in range(peft_model_num_start, peft_model_num_end):
     peft_model_path = os.path.join(script_args.peft_model_path, 'batch_{}'.format(k))
     print('++++++++++++++++++++++++')
     print('loading model {} from {}'.format(k, peft_model_path))
     print('++++++++++++++++++++++++')
+    # config originally uses ref model
     config.model_name = peft_model_path
 
     peft_config = PeftConfig.from_pretrained(peft_model_path)
     model = AutoModelForCausalLMWithValueHead.from_pretrained(
         peft_model_path,
-        load_in_8bit=True,
+        # load_in_8bit=True,
         torch_dtype=torch.bfloat16, 
         peft_config=lora_config,
         device_map=model_gpu,
