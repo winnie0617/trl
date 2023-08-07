@@ -225,9 +225,10 @@ if ppo_trainer.accelerator.num_processes == 1:
 sentiment_pipe = pipeline(
     "sentiment-analysis",
     model=rm_path,
-    # model_kwargs={"load_in_8bit": True},
+    model_kwargs={"load_in_8bit": True},
     # device_map={"": current_device},
-    device=device)
+    # device=device)
+)
 # tokenizer=rm_tokenizer)
 
 # sentiment_pipe = pipeline("sentiment-analysis", model="lvwerra/distilbert-imdb", device=device)
