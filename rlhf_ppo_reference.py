@@ -185,7 +185,7 @@ DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_BOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "</s>"
 # ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.model_name)
-tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+tokenizer = AutoTokenizer.from_pretrained(config.model_name, use_fast = False)
 
 tokenizer.add_special_tokens(
     {
