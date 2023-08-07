@@ -66,9 +66,9 @@ class ScriptArguments:
 
     # NOTE: gpt2 models use Conv1D instead of Linear layers which are not yet supported in 8 bit mode
     # models like gpt-neo* models are more suitable.
-    model_name: Optional[str] = field(default="/home/winnie/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch",
+    model_name: Optional[str] = field(default="/home/winnie/output_models/sft_llama_7b_2e-5_1epoch",
                                       metadata={"help": "the model name"})
-    log_with: Optional[str] = field(default=None, metadata={"help": "use 'wandb' to log with wandb"})
+    log_with: Optional[str] = field(default="wandb", metadata={"help": "use 'wandb' to log with wandb"})
     learning_rate: Optional[float] = field(default=1e-5, metadata={"help": "the learning rate"})
     mini_batch_size: Optional[int] = field(default=3, metadata={"help": "the PPO minibatch size"})
     batch_size: Optional[int] = field(default=256, metadata={"help": "the batch size"})
@@ -232,7 +232,7 @@ sentiment_pipe = pipeline(
 # tokenizer=rm_tokenizer)
 
 # sentiment_pipe = pipeline("sentiment-analysis", model="lvwerra/distilbert-imdb", device=device)
-print(device)
+print("Using device", device)
 
 
 # meteor = evaluate.load('meteor')
@@ -355,8 +355,8 @@ for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
     import matplotlib.pyplot as plt
 
     plt.plot(reward_record)
-    plt.savefig('./output_models/hh_rlhf_ppo/new_reward_record_' + str(ppo_trainer.accelerator.device) + '.png')
-    np.save('./output_models/hh_rlhf_pponew_reward_record_' + str(ppo_trainer.accelerator.device) + '.npy',
+    plt.savefig('hh_rlhf_ppo/new_reward_record_' + str(ppo_trainer.accelerator.device) + '.png')
+    np.save('hh_rlhf_pponew_reward_record_' + str(ppo_trainer.accelerator.device) + '.npy',
             reward_record)
 
     if False:
