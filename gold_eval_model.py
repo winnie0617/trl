@@ -256,12 +256,12 @@ def evaluate(ppo_trainer, dataset):
 
 
 df_results = pd.DataFrame()
-peft_model_num_start = 16
-peft_model_num_end = 24
+peft_model_num_start = 25
+peft_model_num_end = 35
 # peft_model_num_start = (6*current_device)
 # peft_model_num_end = min(6+6*current_device, 24)
 print(f"Device {current_device} - start={peft_model_num_start}, end={peft_model_num_end}")
-for k in range(peft_model_num_start, peft_model_num_end):
+for k in range(peft_model_num_start, peft_model_num_end, 2):
     peft_model_path = os.path.join(script_args.peft_model_path, 'batch_{}'.format(k))
     print('++++++++++++++++++++++++')
     print('loading model {} from {}'.format(k, peft_model_path))
@@ -293,7 +293,7 @@ for k in range(peft_model_num_start, peft_model_num_end):
     df_results['batch{}/response'.format(k)] = train_model_res['response']
     df_results['batch{}/score'.format(k)] = train_model_res['score']
     print(np.mean(train_model_res['score']))
-    df_results.to_csv('coef1.0_test{}_num{}_{}_8bit_tmp.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end))
+    df_results.to_csv('coef0.5_test{}_num{}_{}_8bit_tmp.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end))
 
     ## del ppo_trainer, model, ref_model
     import gc 
@@ -302,7 +302,7 @@ for k in range(peft_model_num_start, peft_model_num_end):
     gc.collect()
     torch.cuda.empty_cache()
 
-df_results.to_csv(datetime.now().strftime('coef1.0_test{}_num{}_{}_%Y_%m_%d_%H_%M.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end)))
+df_results.to_csv(datetime.now().strftime('coef0.5_test{}_num{}_{}_%Y_%m_%d_%H_%M.csv'.format(script_args.test_data, peft_model_num_start, peft_model_num_end)))
 
 
 

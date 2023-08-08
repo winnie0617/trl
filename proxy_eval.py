@@ -74,9 +74,10 @@ def clean_text(text):
 # lengths = [len(clean_response_tensors[j]) for j in range(len(clean_response_tensors))]
 # response_tensors = [response_tensors[j][:np.max([lengths[j], 1])] for j in range(len(response_tensors))]
 process_id = Accelerator().local_process_index
-df = pd.read_csv("/home/winnie/trl/results/coef0.5_testFalse_num11_17_8bit_tmp.csv", index_col=0)
+df = pd.read_csv("/home/winnie/trl/results/coef0.5_testFalse_num17_23_8bit_tmp.csv", index_col=0)
 res = pd.DataFrame()
-for batch_i in range(11, 17):
+# for batch_i in range(17,23,2):
+for batch_i in [17, 22]:
 
     # Compute score
     texts_for_rewards = [q + r for q, r in zip(df["query"], df[f"batch{batch_i}/response"])]
@@ -104,7 +105,7 @@ for batch_i in range(11, 17):
     res[f"batch{batch_i}/rms_std"] = rewards_std
     print(res)
 
-res.to_csv("coef0.5_rms_eval_11_17.csv")
+res.to_csv("coef0.5_rms_eval_17_23.csv")
 
     # batch_rewards_mean = rewards_mean.float().mean().item()
     # print("process {}, iter {}, batch {}: mean score: {}, std: {}".format(process_id, epoch, batch_i, batch_rewards_mean, rewards_std.mean().item()))
