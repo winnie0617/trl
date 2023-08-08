@@ -64,7 +64,7 @@ class ScriptArguments:
     early_stopping: Optional[bool] = field(default=False, metadata={"help": "whether to early stop"})
     target_kl: Optional[float] = field(default=0.1, metadata={"help": "kl target for early stopping"})
     target: Optional[float] = field(default=3, metadata={"help": "target kl divergence of adaptive control"})
-    init_kl_coef: Optional[float] = field(default=0.01,metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},)
+    init_kl_coef: Optional[float] = field(default=0.0,metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},)
     max_grad_norm: Optional[float] = field(default=1, metadata={"help": "Maximum gradient norm for gradient clipping"})
     wandb_name: Optional[str] = field(default='ppo_llamavanilla_gradaccu1_gradnorm1_bs2048_clean###', metadata={"help": "Name for this experiment"})
     uncertainty_coef: Optional[float] = field(default=0.5,metadata={"help": "Uncertainty penalty coefficient"},)
@@ -242,7 +242,7 @@ print("Total Batch Size", ppo_trainer.accelerator.num_processes * config.batch_s
 # are passed to the `generate` function of the PPOTrainer, which is a wrapper around
 # the `generate` function of the trained model.
 generation_kwargs = {
-    "min_length": -1,
+    # "min_length": -1,
     "top_k": 0.0,
     "top_p": 1.0,
     "do_sample": True,
