@@ -225,11 +225,12 @@ if ppo_trainer.accelerator.num_processes == 1:
 sentiment_pipe = pipeline(
     "sentiment-analysis",
     model=rm_path,
+    model_kwargs={"torch_dtype": torch.bfloat16},
     # model_kwargs={"load_in_8bit": True},
     # device_map={"": 7},
     # device=device)
-)
 # tokenizer=rm_tokenizer)
+)
 
 # sentiment_pipe = pipeline("sentiment-analysis", model="lvwerra/distilbert-imdb", device=device)
 print("Using device", device)
@@ -326,7 +327,9 @@ for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
 
     # clean_texts = [clean_text(tmp_text) for tmp_text in tmp_responses]
     # rewards = get_rewards(clean_texts, ref_texts, intents)
-    texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
+
+    # this rm uses "</s>" as EOS token, so remove it at the beginning
+    texts_for_rewards = [q[4:] + r for q, r in zip(batch["query"], batch["response"])]
     pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
     # rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
     rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
