@@ -174,7 +174,7 @@ lora_config = LoraConfig(
 # Now let's build the model, the reference model, and the tokenizer.
 model = AutoModelForCausalLMWithValueHead.from_pretrained(
     config.model_name,
-    # load_in_8bit=True,
+    load_in_8bit=True,
     peft_config=lora_config,
     # layer_norm_names=[],
     # device_map={"": current_device},
@@ -225,8 +225,8 @@ if ppo_trainer.accelerator.num_processes == 1:
 sentiment_pipe = pipeline(
     "sentiment-analysis",
     model=rm_path,
-    model_kwargs={"load_in_8bit": True},
-    # device_map={"": current_device},
+    # model_kwargs={"load_in_8bit": True},
+    # device_map={"": 7},
     # device=device)
 )
 # tokenizer=rm_tokenizer)
@@ -306,8 +306,8 @@ for epoch, batch in tqdm(enumerate(ppo_trainer.dataloader)):
 
     # test_texts = [tokenizer.decode(tmp_tensor) for tmp_tensor in response_tensors]
 
-    for i in range(1):
-        print(clean_texts[i])
+    # for i in range(1):
+    #     print(clean_texts[i])
         # print(test_texts[i], len(test_texts[i]), " | ", clean_texts[i], len(clean_texts[i]))
         # print(response_tensors[i], len(response_tensors[i]), "|", clean_response_tensors[i], len(clean_response_tensors[i]))
     # Compute sentiment score
