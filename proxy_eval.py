@@ -29,6 +29,7 @@ rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: r
 # files = ["rm_2sft_full_train_1epoch_gpt_neo_2_7B_exp4", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp5", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp6", "rm_2sft_full_train_2epoch_gpt_neo_2_7B_exp7", ] # TODO: Currently hardcoded bc of llama
 files = [f"0715_relabel_rm_gpt_neo_2_7b_5e-6_1epoch_{i}" for i in range(1,7)]
 k = len(files)
+print(k)
 
 means_rms = torch.tensor([1.8175465893000364,1.9616623278707266,1.91334992274642,0.6972120497375727,1.1580963432788849,2.7236480712890625])
 stds_rms = torch.tensor([1.1722500539476755,1.2413885538391234,1.1708371368464998,1.308637960323578,1.3141790084902882,1.1942363257298647])
@@ -74,10 +75,18 @@ def clean_text(text):
 # lengths = [len(clean_response_tensors[j]) for j in range(len(clean_response_tensors))]
 # response_tensors = [response_tensors[j][:np.max([lengths[j], 1])] for j in range(len(response_tensors))]
 process_id = Accelerator().local_process_index
-df = pd.read_csv("/home/winnie/trl/results/coef0.5_testFalse_num17_23_8bit_tmp.csv", index_col=0)
+x2 = [15, 17, 18, 20, 21, 23, 24, 26, 28, 30, 32]
+rgs = [(15,18), (18,21), (21,24), (24,27), (27,33)]
+
+df = pd.read_csv(f"/home/winnie/coef2.0_testFalse_num{rgs[0][0]}_{rgs[0][1]}_8bit_tmp.csv", index_col=0)
+i = 1
+for rg in rgs[1:]:
+    curr = pd.read_csv(f"/home/winnie/coef2.0_testFalse_num{rg[0]}_{rg[1]}_8bit_tmp.csv", index_col=0)
+    curr = curr.drop("query", axis=1)
+    df = pd.concat([df, curr], axis=1)
+
 res = pd.DataFrame()
-# for batch_i in range(17,23,2):
-for batch_i in [17, 22]:
+for batch_i in x2:
 
     # Compute score
     texts_for_rewards = [q + r for q, r in zip(df["query"], df[f"batch{batch_i}/response"])]
@@ -96,16 +105,17 @@ for batch_i in [17, 22]:
     pipe = None # Free memory (?)
 
     # Normalize rewards
+    print(rewards)
     rewards = (rewards - means_rms.reshape(k, 1).expand(rewards.shape)) / stds_rms.reshape(k, 1).expand(rewards.shape)
-
     rewards_mean = rewards.mean(axis=0)
+    print(rewards_mean)
     rewards_std = rewards.std(axis=0)
 
     res[f"batch{batch_i}/rms_mean"] = rewards_mean
     res[f"batch{batch_i}/rms_std"] = rewards_std
     print(res)
 
-res.to_csv("coef0.5_rms_eval_17_23.csv")
+res.to_csv("coef2.0_rms_eval_0_32.csv")
 
     # batch_rewards_mean = rewards_mean.float().mean().item()
     # print("process {}, iter {}, batch {}: mean score: {}, std: {}".format(process_id, epoch, batch_i, batch_rewards_mean, rewards_std.mean().item()))

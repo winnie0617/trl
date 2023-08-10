@@ -74,7 +74,7 @@ class ScriptArguments:
     reward_model_path: Optional[str] = field(default='/home/winnie/output_models/0715_openllama_13b_gold_rm_2sft_lora16_3e-5_1epoch_1x8x2bs/merged_rm_715')
     test_data: Optional[bool] = field(default=False)
 
-size = 1024 # size of dataset to use (might be smaller than this because some samples are too long)
+size = 512 # size of dataset to use (might be smaller than this because some samples are too long)
 # models on gpu 0,1,2,3 gold on gpu 4,5,6,7
 num_processes = torch.cuda.device_count()
 current_device = Accelerator().local_process_index
@@ -256,9 +256,9 @@ def evaluate(ppo_trainer, dataset):
 
 
 df_results = pd.DataFrame()
-peft_model_num_start = 27
-peft_model_num_end = 33
-batch_nums = [28, 30, 32]
+peft_model_num_start = 0
+peft_model_num_end = 15
+batch_nums = range(peft_model_num_start, peft_model_num_end, 2)
 # peft_model_num_start = (6*current_device)
 # peft_model_num_end = min(6+6*current_device, 24)
 print(f"Device {current_device} - start={peft_model_num_start}, end={peft_model_num_end}")
