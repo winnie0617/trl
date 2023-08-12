@@ -132,7 +132,7 @@ def collator(data):
 
 
 # set seed before initializing value head for deterministic eval
-set_seed(8888)
+set_seed(2023)
 current_device = Accelerator().local_process_index
 print("Accelerator local_process_index", current_device)
 
