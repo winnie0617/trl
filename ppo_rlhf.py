@@ -60,9 +60,9 @@ class ScriptArguments:
     """
     The name of the Casual LM model we wish to fine with PPO
     """
-    model_name: Optional[str] = field(default='/home/xiongwei/LMFlow/output_models/0715_relabel_sft_llama_7b_2e-5_1epoch', metadata={"help": "the model name"})
+    model_name: Optional[str] = field(default="/home/winnie/output_models/sft_llama_7b_2e-5_1epoch", metadata={"help": "the model name"})
     log_with: Optional[str] = field(default='wandb', metadata={"help": "use 'wandb' to log with wandb"})
-    save_directory: Optional[str] = field(default='/home/yangrui/wchow/trl/logs_trl/')
+    save_directory: Optional[str] = field(default='/home/winnie/trl/logs_trl/')
     epochs: Optional[int] = field(default=1, metadata={'help': "Number of training epoches"})
     learning_rate: Optional[float] = field(default=1e-5, metadata={"help": "the learning rate"})
     mini_batch_size: Optional[int] = field(default=1, metadata={"help": "the PPO minibatch size"})
@@ -73,9 +73,9 @@ class ScriptArguments:
     early_stopping: Optional[bool] = field(default=False, metadata={"help": "whether to early stop"})
     target_kl: Optional[float] = field(default=0.1, metadata={"help": "kl target for early stopping"})
     target: Optional[float] = field(default=0.5, metadata={"help": "target kl divergence of adaptive control"})
-    init_kl_coef: Optional[float] = field(default=0.0,metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},)
+    init_kl_coef: Optional[float] = field(default=0.001,metadata={"help": "Initial KL penalty coefficient (used for adaptive and linear control)"},)
     max_grad_norm: Optional[float] = field(default=1, metadata={"help": "Maximum gradient norm for gradient clipping"})
-    wandb_name: Optional[str] = field(default='ppo_llama_klcoef0', metadata={"help": "Name for this experiment"})
+    wandb_name: Optional[str] = field(default='ppo_llama_klcoef0.001', metadata={"help": "Name for this experiment"})
 
 
 parser = HfArgumentParser(ScriptArguments)
@@ -100,7 +100,7 @@ config = PPOConfig(
 # We then define the arguments to pass to the sentiment analysis pipeline.
 # We set `return_all_scores` to True to get the sentiment score for each token.
 sent_kwargs = {"return_all_scores": True, "function_to_apply": "none", "batch_size": 20}
-
+baseline_mean = 4.87
 # Below is an example function to build the dataset. In our case, we use the IMDB dataset
 # from the `datasets` library. One should customize this function to train the model on
 # its own dataset.
@@ -156,22 +156,22 @@ lora_config = LoraConfig(
 )
 
 process_id = Accelerator().local_process_index
-gpu_id_map = {
-    0: 0,
-    1: 1,
-    2: 2,
-    3: 3
-}
-pipeline_gpu_id_map = {
-    0: 4,
-    1: 5,
-    2: 6,
-    3: 7
-}
+# gpu_id_map = {
+#     0: 0,
+#     1: 1,
+#     2: 2,
+#     3: 3
+# }
+# pipeline_gpu_id_map = {
+#     0: 4,
+#     1: 5,
+#     2: 6,
+#     3: 7
+# }
 
-gpu_id = gpu_id_map[process_id]
-pipeline_gpu_id = pipeline_gpu_id_map[process_id]
-print('process: {}, model gpu id: {}, pipline gpu id: {}'.format(process_id, gpu_id, pipeline_gpu_id))
+gpu_id = process_id
+pipeline_gpu_id = process_id
+# print('process: {}, model gpu id: {}, pipline gpu id: {}'.format(process_id, gpu_id, pipeline_gpu_id))
 
 model = AutoModelForCausalLMWithValueHead.from_pretrained(
     config.model_name,
@@ -189,7 +189,7 @@ ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(
     config.model_name, 
     load_in_8bit=True, 
     peft_config=lora_config,
-    device_map=gpu_id,
+    device_map=pipeline_gpu_id,
     )
 
 tokenizer = AutoTokenizer.from_pretrained(config.model_name, use_fast = False)
@@ -203,12 +203,12 @@ tokenizer.add_special_tokens(
     }
 )
 
-rm_path = "/home/yangrui/wchow/output_models/rm_finetune-gpt-neo_bs_7_20/rm_0"
-data_path = "/home/yangrui/wchow/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
+rm_path = "weqweasdas/hh_rlhf_rm_open_llama_3b"
+data_path = "/home/winnie/data/clean_hh_rlhf_uncerrtainty_study/rlhf_train_prompt/clean_hh_rlhf_rlhf_prompt.json"
 dataset = build_dataset(config, tokenizer, data_path)
 # eval_data_path = "/apdcephfs/private_radyang/trl/examples/rlhf/data/eval_prompt.json"
 # eval_dataset = build_dataset(config, tokenizer, eval_data_path)
-rm_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-2.7B") #TODO: remove hard code
+rm_tokenizer = AutoTokenizer.from_pretrained(rm_path)
 
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.learning_rate)
@@ -223,6 +223,7 @@ sentiment_pipe = pipeline(
     model=rm_path,
     device=pipeline_gpu_id,
     # device='auto'
+    model_kwargs={"torch_dtype": torch.bfloat16},
     tokenizer=rm_tokenizer
     )
 sentiment_pipe.tokenizer.pad_token_id = sentiment_pipe.model.config.eos_token_id
@@ -233,7 +234,7 @@ sentiment_pipe.tokenizer.pad_token_id = sentiment_pipe.model.config.eos_token_id
 # are passed to the `generate` function of the PPOTrainer, which is a wrapper around
 # the `generate` function of the trained model.
 generation_kwargs = {
-    "min_length": -1,
+    # "min_length": -1,
     "top_k": 0.0,
     "top_p": 1.0,
     "do_sample": True,
@@ -275,9 +276,10 @@ for epoch in range(epochs):
         batch['response'] = clean_texts
 
      
-        texts_for_rewards = [q + r for q, r in zip(batch["query"], batch["response"])]
+       # this rm uses "</s>" as EOS token, so remove it at the beginning
+        texts_for_rewards = [q[4:] + r for q, r in zip(batch["query"], batch["response"])]
         pipe_outputs = sentiment_pipe(texts_for_rewards, **sent_kwargs)
-        rewards = [torch.tensor(output[0]["score"]) for output in pipe_outputs]
+        rewards = [torch.tensor(output[0]["score"] - baseline_mean) for output in pipe_outputs]
 
         print("iter {}, batch {}: mean score: {}".format(epoch, i, np.mean(rewards)))
         reward_record.append(np.mean(rewards))
